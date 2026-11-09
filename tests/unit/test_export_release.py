@@ -18,7 +18,9 @@ from scripts import export_release as er
 pytestmark = pytest.mark.unit
 
 GIT = shutil.which("git")
-REAL_TEMPLATES = Path(__file__).resolve().parents[2] / "scripts" / "release_templates"
+REAL_REPO = Path(__file__).resolve().parents[2]
+REAL_TEMPLATES = REAL_REPO / "scripts" / "release_templates"
+LICENCE_FILES = ("LICENSE", "NOTICE")
 # Joined at runtime so this file never trips the real export's agent-path rule.
 CLAUDE_DIR = ".claude"
 
@@ -54,6 +56,9 @@ def repo(tmp_path: Path) -> Path:
     git(root, "init", "-q")
     for name in ("README.release.md", "CLAUDE.release.md"):
         write(root, f"scripts/release_templates/{name}", (REAL_TEMPLATES / name).read_text())
+    # The real licence files: they must ship and pass the scans unchanged.
+    for name in LICENCE_FILES:
+        write(root, name, (REAL_REPO / name).read_text())
     files = [
         "src/app.py",
         "docs/setup.md",
@@ -121,9 +126,14 @@ def test_exports_only_shareable_files_and_the_release_templates(repo: Path, tmp_
         "scripts/release_templates/CLAUDE.release.md",
         "README.md",
         "CLAUDE.md",
+        "LICENSE",
+        "NOTICE",
     }
     exported = {str(p.relative_to(out)) for p in out.rglob("*") if p.is_file()}
     assert exported == set(result.files)
+    # Apache-2.0 requires LICENSE + NOTICE to travel with every copy, verbatim.
+    for name in LICENCE_FILES:
+        assert (out / name).read_bytes() == (REAL_REPO / name).read_bytes()
     # The owner's README/CLAUDE.md are replaced, never copied.
     assert (out / "README.md").read_text() == (REAL_TEMPLATES / "README.release.md").read_text()
     assert (out / "CLAUDE.md").read_text() == (REAL_TEMPLATES / "CLAUDE.release.md").read_text()
@@ -182,7 +192,7 @@ def test_is_excluded(rel: str) -> None:
     ["docs/README.md", "src/x/token_file.py", "docs/security.md", "scripts/export_release.py",
      "scripts/release_templates/CLAUDE.release.md", "tests/unit/test_memory_x.py",
      "tests/fixtures/screen_samples.jsonl", "deploy/config.example.toml",
-     "src/x/sqlite_store.py", "docs/env.md"],
+     "src/x/sqlite_store.py", "docs/env.md", "LICENSE", "NOTICE"],
 )  # fmt: skip
 def test_is_not_excluded(rel: str) -> None:
     assert not er.is_excluded(rel)
@@ -492,7 +502,7 @@ def test_main_reports_success_and_refusal(
     args = ["--repo", str(repo), "--config", str(config), "--secrets-dir", str(secrets)]
     assert er.main([*args, "--out", str(tmp_path / "out")]) == 0
     stdout = capsys.readouterr().out
-    assert "exported 8 files" in stdout
+    assert "exported 10 files" in stdout  # 8 + LICENSE + NOTICE
     # secrets-6: the loaded sources are named (labels only, never values).
     assert "denylist sources: tailnet host name, owner-only agent path, " in stdout
     assert "config owner_login" in stdout and "secret file admin.token" in stdout

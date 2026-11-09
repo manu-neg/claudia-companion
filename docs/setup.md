@@ -116,7 +116,7 @@ sudo deploy/check.sh
 - `claudia totp setup` (interactive terminal, root) prints an `otpauth://` URI and a manual key: add it to **your** authenticator app and type one current code. Risky actions Claudia wants to take need your Approve tap **and** a fresh code.
 - **Run the TOTP setup only yourself, in your own terminal:** never through Claude Code, Claudia or any agent session (their transcripts would keep the secret), never in a screenshot or screen share. Afterwards clear the terminal and its scrollback (`clear`, then your terminal's "clear scrollback", or close the window).
 - Text the bot to talk to Claudia; `/stop` stops every run. Off again: `claudia_enabled = false`, re-run the wizard.
-- Voice replies (`install.sh --voice-models DIR`) stay unavailable until the voice hashes in `deploy/claudia/voices.sha256` are pinned (`install.sh` refuses before that).
+- Voice replies (`install.sh --voice-models DIR`) need the four Piper files in DIR; each must match its SHA-256 pinned in `deploy/claudia/voices.sha256` (`install.sh` refuses otherwise and never downloads).
 
 Reference: `docs/operations.md` "Claudia", ADR 0031 and 0036.
 

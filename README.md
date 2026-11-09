@@ -57,4 +57,7 @@ Requires Python 3.12 and [uv](https://docs.astral.sh/uv/).
 
 ## License
 
-Private. Shared with you personally; please don't redistribute.
+Apache License 2.0 (includes a patent grant): see `LICENSE` and `NOTICE`.
+The optional `claudia-voice` extra installs Piper (`piper-tts`, GPL-3.0) on
+the host at runtime; it is not part of this repository. Voice models are not
+shipped either (each keeps its own licence, listed in `NOTICE`).

@@ -624,7 +624,7 @@ sudo deploy/check.sh
 
 ### Voice replies (optional)
 
-`--voice-models DIR` copies `es_MX-claude-high` and `en_US-amy-medium` (`.onnx` + `.onnx.json`) into a root-only staging dir (`/var/lib/claudia-host/voices.incoming`), checks **the copies** against the SHA-256 hashes in `deploy/claudia/voices.sha256` (copies deleted on a mismatch), then moves them to `/var/lib/claudia-host/voices` (0600), and adds the `claudia-voice` extra (Piper, GPL-3.0, runtime only). Every later run re-checks the installed models and stops on a mismatch. It refuses until all four hashes are committed; install.sh never downloads. Without the flag no voice is installed. The extra has upper bounds and CI runs pip-audit on it (locked export).
+`--voice-models DIR` copies `es_MX-claude-high` and `en_US-amy-medium` (`.onnx` + `.onnx.json`) into a root-only staging dir (`/var/lib/claudia-host/voices.incoming`), checks **the copies** against the SHA-256 hashes in `deploy/claudia/voices.sha256` (copies deleted on a mismatch), then moves them to `/var/lib/claudia-host/voices` (0600), and adds the `claudia-voice` extra (Piper, GPL-3.0, runtime only). Every later run re-checks the installed models and stops on a mismatch. All four hashes are pinned (verified against Hugging Face `rhasspy/piper-voices` on 2026-11-09; licences: es_MX-claude-high apache-2.0, en_US-amy-medium per its MODEL_CARD, MycroftAI/mimic3-voices); install.sh never downloads, so fetch the four files yourself into DIR. Without the flag no voice is installed. The extra has upper bounds and CI runs pip-audit on it (locked export).
 
 ### Live checks (`deploy/check.sh`, only with `claudia_enabled = true`)
 

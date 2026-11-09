@@ -1,0 +1,11 @@
+claudia-companion / preview-dashboard
+Copyright 2026 the claudia-companion contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Third-party components (not distributed here):
+- The optional `claudia-voice` extra installs Piper (piper-tts, GPL-3.0) as a
+  runtime dependency on the host only; no Piper code is included in this
+  repository.
+- Voice models are not shipped. The pinned models are es_MX-claude-high
+  (apache-2.0) and en_US-amy-medium (licence: see MycroftAI/mimic3-voices).

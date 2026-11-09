@@ -2247,13 +2247,38 @@ def test_install_sh_removes_a_stale_claudia_admin_env(tmp_path: Path) -> None:
 
 
 def test_voice_models_refused_until_pinned(tmp_path: Path) -> None:
-    """Shipped pin file has no hashes yet: fail closed, nothing installed."""
+    """A pin file without hashes fails closed: nothing installed."""
+    deploy_copy = _deploy_copy(tmp_path)
+    (deploy_copy / "claudia" / "voices.sha256").write_text("# no pins\n")
     models = tmp_path / "models"
     models.mkdir()
-    result = run_install_dry_run(tmp_path / "p", *_CLAUDIA_ARGS, "--voice-models", str(models))
+    result = run_install_dry_run(
+        tmp_path / "p",
+        *_CLAUDIA_ARGS,
+        "--voice-models",
+        str(models),
+        install_sh=deploy_copy / "install.sh",
+    )
     assert result.returncode == 2
     assert "is not pinned" in result.stderr
     assert _actions(result.stdout) == []
+
+
+def test_shipped_voice_pins_are_well_formed() -> None:
+    """V-PIN: exactly the four owner voices, `<64 lowercase hex>  <name>`."""
+    pin_lines = [
+        line for line in VOICE_PINS.read_text().splitlines() if line and not line.startswith("#")
+    ]
+    pin_re = re.compile(r"[0-9a-f]{64}  [A-Za-z0-9._-]+")
+    assert all(pin_re.fullmatch(line) for line in pin_lines), pin_lines
+    assert sorted(line.split("  ")[1] for line in pin_lines) == sorted(
+        [
+            "es_MX-claude-high.onnx",
+            "es_MX-claude-high.onnx.json",
+            "en_US-amy-medium.onnx",
+            "en_US-amy-medium.onnx.json",
+        ]
+    )
 
 
 def test_voice_models_need_claudia(tmp_path: Path) -> None:
@@ -2348,7 +2373,7 @@ def test_deploy6_installed_voices_are_reverified_on_a_plain_rerun(tmp_path: Path
     result = run_install_dry_run(prefix, install_sh=deploy_copy / "install.sh")
     assert result.returncode == 0, result.stderr
     assert f"(pinned hashes) in {prefix}/var/lib/claudia-host/voices\n" in result.stdout
-    # Unpinned (the shipped file): an installed voice dir stops the install.
+    # Unpinned: an installed voice dir stops the install.
     (deploy_copy / "claudia" / "voices.sha256").write_text("# no pins\n")
     result = run_install_dry_run(prefix, install_sh=deploy_copy / "install.sh")
     assert result.returncode == 1
