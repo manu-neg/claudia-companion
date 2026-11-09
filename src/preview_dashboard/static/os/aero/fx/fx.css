@@ -1,0 +1,598 @@
+/*
+  Aero motion (docs/frontend-os.md#aero, docs/frontend-fx.md): windows bloom open and drop away,
+  glass glows and glints under the pointer, menus fade down, badges pop, the desktop breathes, the
+  splash orb lights up and the screensaver floats bubbles. Transform/opacity only, timed by the
+  motion set in chrome.css. Scoped to :root[data-os="aero"], keyframes prefixed "aero-"; every
+  animation and transition is switched off under prefers-reduced-motion (block at the end).
+*/
+
+/* --- window open: a soft bloom - scale up from 94%, rise a little, fade in --- */
+
+@keyframes aero-window-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--aero-open-rise)) scale(var(--aero-open-scale));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+:root[data-os="aero"] .main > .window {
+  transform-origin: 50% 24%;
+  animation: aero-window-in var(--aero-dur-slow) var(--aero-ease-out);
+}
+
+/* --- close / back: a quick fade-down before the router swaps the window (fx/close.js) --- */
+
+@keyframes aero-window-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(var(--aero-close-drop)) scale(0.98);
+  }
+}
+
+:root[data-os="aero"] .main > .window.aero-closing {
+  pointer-events: none;
+  animation: aero-window-out var(--aero-dur-fast) var(--aero-ease-in) forwards;
+}
+
+/* --- hover light: glow blooms in fast and fades out slowly (Vista's hot-track) --- */
+
+:root[data-os="aero"] .button::before,
+:root[data-os="aero"] .shell-bar .desk-icon::before,
+:root[data-os="aero"] .shell-link::before,
+:root[data-os="aero"] .shell-menu-trigger::before,
+:root[data-os="aero"] .titlebar-close::after,
+:root[data-os="aero"] .row-link::before {
+  transition: opacity var(--aero-dur-slow) var(--aero-ease-glide);
+}
+
+:root[data-os="aero"] .button:hover::before,
+:root[data-os="aero"] .shell-bar .desk-icon:hover::before,
+:root[data-os="aero"] .shell-link:hover::before,
+:root[data-os="aero"] .shell-menu-trigger:hover::before,
+:root[data-os="aero"] .titlebar-close:hover::after,
+:root[data-os="aero"] .row-link:hover::before {
+  transition-duration: var(--aero-dur-fast);
+}
+
+/* --- knowledge map: notes changed this week breathe a soft halo (paused when hidden) --- */
+
+@keyframes aero-kmap-glow {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+:root[data-os="aero"] .kmap-node.is-recent .kmap-ring {
+  animation: aero-kmap-glow calc(var(--aero-dur-slow) * 8) var(--aero-ease-glide) infinite alternate;
+}
+
+:root[data-os="aero"].aero-paused .kmap-node.is-recent .kmap-ring {
+  animation-play-state: paused;
+}
+
+/* --- the glint: a band of light sweeps across a glossy button once as the pointer arrives --- */
+
+@keyframes aero-glint {
+  from {
+    opacity: 1;
+    transform: translateX(-110%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(260%);
+  }
+}
+
+:root[data-os="aero"] .button::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 60%;
+  background: var(--aero-shine-band);
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (hover: hover) {
+  :root[data-os="aero"] .button:hover::after {
+    animation: aero-glint var(--aero-dur-glint) var(--aero-ease-glide);
+  }
+}
+
+/* --- menus, drop-downs and balloon hints fade in with a small drop --- */
+
+@keyframes aero-drop-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--aero-menu-drop));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+:root[data-os="aero"] .ctx-menu,
+:root[data-os="aero"] .shell-menu,
+:root[data-os="aero"] .balloon-help {
+  transform-origin: top center;
+  animation: aero-drop-in var(--aero-dur-menu) var(--aero-ease-out);
+}
+
+/* --- confirm dialog: blooms like a window; the backdrop dims in --- */
+
+@keyframes aero-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+:root[data-os="aero"] .dialog[open] {
+  animation: aero-window-in var(--aero-dur-slow) var(--aero-ease-out);
+}
+
+:root[data-os="aero"] .dialog[open]::backdrop {
+  animation: aero-fade-in var(--aero-dur-slow) var(--aero-ease-out);
+}
+
+/* --- toast: rises and fades in, sinks and fades out --- */
+
+:root[data-os="aero"] .toast {
+  opacity: 0;
+  transform: translate(-50%, var(--aero-open-rise));
+  transition:
+    opacity var(--aero-dur-base) var(--aero-ease-out),
+    transform var(--aero-dur-base) var(--aero-ease-out),
+    visibility 0s linear var(--aero-dur-base);
+}
+
+/* Showing is an animation, not a transition: the first toast goes from display: none (empty)
+   to visible in one step, which a transition can't start from. */
+@keyframes aero-toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, var(--aero-open-rise));
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+:root[data-os="aero"] .toast.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  transition: visibility 0s;
+  animation: aero-toast-in var(--aero-dur-base) var(--aero-ease-out);
+}
+
+/* --- taskbar badge: pops when its count rises (fx/badge.js) --- */
+
+@keyframes aero-badge-pop {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.3);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+:root[data-os="aero"] .shell-bar .desk-icon.aero-badge-pop::after {
+  animation: aero-badge-pop var(--aero-dur-slow) var(--aero-ease-spring);
+}
+
+/* --- the desktop breathes: rays shimmer and sway, bubbles drift or rise (paused when hidden) --- */
+
+@keyframes aero-ray-shimmer {
+  from {
+    opacity: 0.55;
+    transform: rotate(var(--aero-ray-angle));
+  }
+  to {
+    opacity: 1;
+    transform: rotate(calc(var(--aero-ray-angle) + 2deg));
+  }
+}
+
+@keyframes aero-bubble-drift {
+  from {
+    transform: translate(0, 0);
+  }
+  to {
+    transform: translate(14px, -28px);
+  }
+}
+
+@keyframes aero-bubble-rise {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  8% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(40px, -105vh);
+  }
+}
+
+:root[data-os="aero"] .aero-ray {
+  animation: aero-ray-shimmer var(--aero-ambient-shimmer) var(--aero-ease-glide) infinite alternate;
+}
+
+:root[data-os="aero"] .aero-ray-2 {
+  animation-duration: calc(var(--aero-ambient-shimmer) * 1.35);
+  animation-delay: calc(var(--aero-ambient-shimmer) * -0.6);
+}
+
+:root[data-os="aero"] .aero-ray-3 {
+  animation-duration: calc(var(--aero-ambient-shimmer) * 0.8);
+  animation-delay: calc(var(--aero-ambient-shimmer) * -1.1);
+}
+
+:root[data-os="aero"] .aero-bubble {
+  animation: aero-bubble-drift var(--aero-ambient-drift) var(--aero-ease-glide) infinite alternate;
+}
+
+:root[data-os="aero"] .aero-bubble-3 {
+  animation-duration: calc(var(--aero-ambient-drift) * 1.25);
+  animation-delay: calc(var(--aero-ambient-drift) * -0.5);
+}
+
+:root[data-os="aero"] .aero-bubble-5 {
+  animation-duration: calc(var(--aero-ambient-drift) * 1.6);
+  animation-delay: calc(var(--aero-ambient-drift) * -1.2);
+}
+
+:root[data-os="aero"] .aero-bubble-6 {
+  animation-duration: calc(var(--aero-ambient-drift) * 0.8);
+  animation-delay: calc(var(--aero-ambient-drift) * -0.3);
+}
+
+:root[data-os="aero"] .aero-bubble-2,
+:root[data-os="aero"] .aero-bubble-4 {
+  animation: aero-bubble-rise var(--aero-ambient-rise) linear infinite;
+}
+
+:root[data-os="aero"] .aero-bubble-4 {
+  animation-duration: calc(var(--aero-ambient-rise) * 0.7);
+  animation-delay: calc(var(--aero-ambient-rise) * -0.45);
+}
+
+@keyframes aero-aurora {
+  from {
+    opacity: 0.55;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(3vw);
+  }
+}
+
+:root[data-os="aero"] body[data-background="aurora"] .aero-hill {
+  animation: aero-aurora calc(var(--aero-ambient-shimmer) * 1.6) var(--aero-ease-glide) infinite alternate;
+}
+
+:root[data-os="aero"] body[data-background="aurora"] .aero-hill-back {
+  animation-delay: calc(var(--aero-ambient-shimmer) * -1.3);
+}
+
+:root[data-os="aero"].aero-paused .aero-scenery > * {
+  animation-play-state: paused;
+}
+
+/* --- startup splash: the orb lights up with a bloom, then "Previews" fades up (fx/splash.js) --- */
+
+:root[data-os="aero"] .aero-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  background: var(--aero-splash-bg);
+  color: var(--aero-white);
+  font-family: var(--font-chrome);
+  text-align: center;
+}
+
+:root[data-os="aero"] .aero-splash-orb {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: var(--aero-orb-gloss), var(--aero-orb);
+  box-shadow: var(--aero-orb-ring);
+}
+
+:root[data-os="aero"] .aero-splash-orb::after {
+  content: "";
+  position: absolute;
+  left: 38px;
+  top: 30px;
+  width: 30px;
+  height: 36px;
+  background: var(--aero-white);
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+
+:root[data-os="aero"] .aero-splash-bloom {
+  position: absolute;
+  inset: -40px;
+  border-radius: 50%;
+  background: var(--aero-splash-bloom);
+  opacity: 0;
+}
+
+:root[data-os="aero"] .aero-splash-title {
+  margin: 0;
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-strong);
+  letter-spacing: var(--letter-spacing-heading);
+  text-shadow: var(--aero-title-text-shadow);
+}
+
+:root[data-os="aero"] .aero-splash-hint {
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+@keyframes aero-orb-light {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes aero-bloom {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  35% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+}
+
+@keyframes aero-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--aero-open-rise));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes aero-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+:root[data-os="aero"] .aero-splash-orb {
+  animation: aero-orb-light var(--aero-dur-splash) var(--aero-ease-out) both;
+}
+
+:root[data-os="aero"] .aero-splash-bloom {
+  animation: aero-bloom calc(var(--aero-dur-splash) * 2) var(--aero-ease-out) calc(var(--aero-dur-splash) * 0.4) both;
+}
+
+:root[data-os="aero"] .aero-splash-title {
+  animation: aero-rise-in var(--aero-dur-splash) var(--aero-ease-out) calc(var(--aero-dur-splash) * 0.6) both;
+}
+
+:root[data-os="aero"] .aero-splash-hint {
+  animation: aero-fade-in var(--aero-dur-splash) var(--aero-ease-out) var(--aero-dur-splash) both;
+}
+
+:root[data-os="aero"] .aero-splash.aero-leaving,
+:root[data-os="aero"] .aero-screensaver.aero-leaving {
+  pointer-events: none;
+  animation: aero-fade-out var(--aero-dur-slow) var(--aero-ease-in) forwards;
+}
+
+/* --- screensaver: iridescent bubbles float and bounce off the edges (fx/screensaver.js) --- */
+
+:root[data-os="aero"] .aero-screensaver {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  overflow: hidden;
+  background: var(--aero-screensaver-bg);
+  animation: aero-fade-in var(--aero-dur-screen) var(--aero-ease-out);
+  /* Per-bubble defaults; screensaver.js varies them on each bubble via CSSOM. */
+  --aero-ss-size: 90px;
+  --aero-ss-dx: 20s;
+  --aero-ss-dy: 15s;
+  --aero-ss-delay-x: 0s;
+  --aero-ss-delay-y: 0s;
+}
+
+:root[data-os="aero"] .aero-ss-lane,
+:root[data-os="aero"] .aero-ss-float,
+:root[data-os="aero"] .aero-ss-bubble {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: var(--aero-ss-size);
+  height: var(--aero-ss-size);
+}
+
+:root[data-os="aero"] .aero-ss-lane {
+  animation: aero-ss-x var(--aero-ss-dx) linear var(--aero-ss-delay-x) infinite alternate;
+}
+
+:root[data-os="aero"] .aero-ss-float {
+  animation: aero-ss-y var(--aero-ss-dy) linear var(--aero-ss-delay-y) infinite alternate;
+}
+
+:root[data-os="aero"] .aero-ss-bubble {
+  overflow: hidden;
+  border-radius: 50%;
+  border: var(--border-width) solid var(--aero-bubble-edge);
+  background: var(--aero-bubble);
+  animation: aero-ss-wobble calc(var(--aero-ss-dy) * 0.5) var(--aero-ease-glide) infinite alternate;
+}
+
+/* The soap film: a slow turning rainbow sheen inside each bubble. */
+:root[data-os="aero"] .aero-ss-bubble::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--aero-ss-film);
+  animation: aero-ss-film var(--aero-ambient-film) linear infinite;
+}
+
+@keyframes aero-ss-x {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(100vw - var(--aero-ss-size)));
+  }
+}
+
+@keyframes aero-ss-y {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(calc(100vh - var(--aero-ss-size)));
+  }
+}
+
+@keyframes aero-ss-wobble {
+  from {
+    transform: scale(1, 0.97);
+  }
+  to {
+    transform: scale(0.97, 1);
+  }
+}
+
+@keyframes aero-ss-film {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+/* The splash and screensaver palette. */
+:root[data-os="aero"] {
+  --aero-splash-bg: radial-gradient(80% 60% at 50% 45%, #2d7fc4 0, #0f4c8a 55%, #082f5c 100%);
+  --aero-splash-bloom: radial-gradient(closest-side, rgb(170 255 140 / 0.85), rgb(120 230 255 / 0.35) 55%, rgb(120 230 255 / 0));
+  --aero-screensaver-bg: rgb(4 24 44 / 0.5);
+  --aero-ss-film: conic-gradient(
+    from 30deg,
+    rgb(255 120 200 / 0.28),
+    rgb(120 200 255 / 0.28),
+    rgb(140 255 170 / 0.24),
+    rgb(255 230 120 / 0.26),
+    rgb(255 120 200 / 0.28)
+  );
+}
+
+:root[data-os="aero"].aero-paused .aero-screensaver * {
+  animation-play-state: paused;
+}
+
+/* --- reduced motion: nothing moves (fx.js also skips the splash, screensaver, close fade and
+   badge pop; app.css caps durations globally as a backstop) --- */
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-os="aero"] {
+    --aero-dur-press: 0ms;
+    --aero-dur-fast: 0ms;
+    --aero-dur-menu: 0ms;
+    --aero-dur-slow: 0ms;
+    --aero-dur-glint: 0ms;
+    --aero-dur-splash: 0ms;
+    --aero-dur-screen: 0ms;
+  }
+
+  :root[data-os="aero"] .main > .window,
+  :root[data-os="aero"] .main > .window.aero-closing,
+  :root[data-os="aero"] .button:hover::after,
+  :root[data-os="aero"] .ctx-menu,
+  :root[data-os="aero"] .shell-menu,
+  :root[data-os="aero"] .balloon-help,
+  :root[data-os="aero"] .dialog[open],
+  :root[data-os="aero"] .dialog[open]::backdrop,
+  :root[data-os="aero"] .shell-bar .desk-icon.aero-badge-pop::after,
+  :root[data-os="aero"] .toast.is-visible,
+  :root[data-os="aero"] .aero-ray,
+  :root[data-os="aero"] .aero-ray-2,
+  :root[data-os="aero"] .aero-ray-3,
+  :root[data-os="aero"] .aero-bubble,
+  :root[data-os="aero"] .aero-bubble-3,
+  :root[data-os="aero"] .aero-bubble-5,
+  :root[data-os="aero"] .aero-bubble-6,
+  :root[data-os="aero"] .aero-bubble-2,
+  :root[data-os="aero"] .aero-bubble-4,
+  :root[data-os="aero"] body[data-background="aurora"] .aero-hill,
+  :root[data-os="aero"] .aero-splash-orb,
+  :root[data-os="aero"] .aero-splash-bloom,
+  :root[data-os="aero"] .aero-splash-title,
+  :root[data-os="aero"] .aero-splash-hint,
+  :root[data-os="aero"] .aero-splash.aero-leaving,
+  :root[data-os="aero"] .aero-screensaver.aero-leaving,
+  :root[data-os="aero"] .aero-screensaver,
+  :root[data-os="aero"] .aero-ss-lane,
+  :root[data-os="aero"] .aero-ss-float,
+  :root[data-os="aero"] .aero-ss-bubble,
+  :root[data-os="aero"] .aero-ss-bubble::before,
+  :root[data-os="aero"] .kmap-node.is-recent .kmap-ring {
+    animation: none;
+  }
+
+  :root[data-os="aero"] .button::before,
+  :root[data-os="aero"] .shell-bar .desk-icon::before,
+  :root[data-os="aero"] .shell-link::before,
+  :root[data-os="aero"] .shell-menu-trigger::before,
+  :root[data-os="aero"] .titlebar-close::after,
+  :root[data-os="aero"] .row-link::before,
+  :root[data-os="aero"] .toast,
+  :root[data-os="aero"] .toast.is-visible {
+    transition: none;
+  }
+}

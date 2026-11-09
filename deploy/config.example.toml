@@ -1,0 +1,137 @@
+# deploy/config.example.toml — template for /etc/preview-dashboard/config.toml
+#
+# Every `Settings` field (src/preview_dashboard/config.py) is documented
+# below with its default. Copy this file to /etc/preview-dashboard/config.toml,
+# fill in the identity/network section, and remove any line you want left
+# at its default (defaults apply whether the line is present-and-equal or
+# absent). install.sh writes a filled-in copy of just this template from
+# its --owner-login/--host arguments; edit the installed file afterwards
+# for anything else (limits, intake policy, ...).
+#
+# File itself must end up root-owned, mode 0640, not group/world-writable
+# (docs/security.md C16) — install.sh does this; `preview-dashboard
+# check-config` verifies it.
+#
+# Precedence (highest first): constructor kwargs (n/a outside tests) >
+# PDASH_* env vars (narrow-only, docs/security.md "Env narrowing") > this
+# file > field defaults.
+
+# --- storage -----------------------------------------------------------------
+# Root of the SQLite DB (db/) and filesystem blob store (blobs/, staging/).
+# Created by `install.sh` as pdash-admin:pdash, mode 0750 (docs/operations.md).
+data_dir = "/var/lib/preview-dashboard"
+
+# --- identity / network (docs/security.md C1-C3, C5) --------------------------
+# REQUIRED: no sensible default — an empty value makes the viewer refuse
+# every request (owner_login) or refuse to start (allowed_hosts/preview_origin).
+
+# The owner's Tailscale login, matched byte-exactly against the
+# `Tailscale-User-Login` header `tailscale serve` forwards (C2).
+owner_login = ""
+
+# Exact lowercase hostname(s) the dashboard app answers `Host` on — no
+# scheme, no port, no wildcard (browsers omit the default :443). This is
+# normally just the tailnet hostname `tailscale serve` prints
+# (deploy/tailscale/serve.sh), e.g. "my-host.tailnetname.ts.net".
+allowed_hosts = []
+
+# The separate preview origin (C5): exactly "https://<host>:<port>", a
+# non-443 port, different from allowed_hosts. Fronted by `tailscale serve
+# --https=8443` (deploy/tailscale/serve.sh); the app itself listens on
+# preview_port (below) on loopback.
+preview_origin = ""
+
+# --- process endpoints ---------------------------------------------------------
+# Must stay a loopback IP literal (C1) — never 0.0.0.0 or a hostname.
+viewer_host = "127.0.0.1"
+# Dashboard app (UI + JSON API). Fronted by `tailscale serve --https=443`.
+viewer_port = 8787
+# Preview app (item bytes only). Fronted by `tailscale serve --https=8443`.
+# Must differ from viewer_port.
+preview_port = 8788
+# Admin API's Unix socket (bound by the app itself, mode 0660, C26).
+admin_socket = "/run/preview-dashboard/admin.sock"
+# Admin bearer token file (root:pdash, mode 0640, C12) — see
+# `preview-dashboard gen-token` / docs/operations.md "Token generation".
+admin_token_file = "/etc/preview-dashboard/admin.token"
+
+# --- lifecycle -------------------------------------------------------------------
+# Days a trashed item stays recoverable before the hourly purge job deletes
+# it permanently. Must be >= 1.
+trash_retention_days = 14
+
+# --- limits (docs/security.md C10, C17, C18) --------------------------------------
+# Max files in one published item.
+max_files = 500
+# Max bytes for a single file within an item. Must be <= max_item_bytes.
+max_file_bytes = 104857600          # 100 MiB
+# Max total bytes for one item (sum of its files). Must be <= max_total_bytes.
+max_item_bytes = 524288000          # 500 MiB
+# Global quota across every item (any state) at once.
+max_total_bytes = 21474836480       # 20 GiB
+# Global quota on item count (any state) at once.
+max_items = 5000
+# Publish attempts allowed per rolling hour (every attempt counts, C18).
+publish_rate_per_hour = 120
+# Bytes of a TEXT-kind file the viewer renders inline before truncating.
+render_cap_bytes = 2097152          # 2 MiB
+# Free-disk floor: a publish that would leave less than this free is refused.
+min_free_disk_bytes = 1073741824    # 1 GiB
+
+# --- publish deadline / orphan sweep (docs/security.md C11) ------------------------
+# A publish that hasn't committed within this many seconds aborts and never
+# commits.
+publish_timeout_seconds = 600
+# The orphan blob sweep only touches blobs older than this many seconds;
+# must stay > publish_timeout_seconds (enforced at load).
+orphan_grace_seconds = 3600
+
+# --- MCP intake policy (docs/security.md C10) -------------------------------------
+# Absolute, allowlisted source roots the MCP server may read from. Must not
+# be "/", "/root", "/etc", "/home", "/var", "/usr", anything under
+# /proc /sys /dev, or overlap /root/.ssh, admin_token_file's directory, or
+# data_dir (enforced at load). install.sh creates /root/outbox 0700, root-owned.
+intake_allowed_roots = ["/root/outbox"]
+# Additional secret-filename/dirname patterns to deny, ON TOP OF the
+# built-in floor (config.py DEFAULT_INTAKE_DENIED_PATTERNS) — this list can
+# only ever grow, never replace the built-ins. Leave empty to use only the
+# built-in floor. See docs/security.md "Intake denylist semantics".
+intake_denied_patterns = []
+
+# --- notifications: Telegram alerts + choice answers (ADR 0021, docs/notifier.md) ---
+# Off by default. When on, question prompts, option labels, session labels and
+# done/failed titles (secret-scanned) are sent to Telegram by the notifier.
+# Env may only turn this off, never on (C16).
+notify_enabled = false
+# The owner's Telegram chat id (from `preview-dashboard notify pair`). Required
+# when notify_enabled = true; only ever set here, never via env (C16, C34).
+# notify_owner_chat_id = 123456789
+# Alerts (questions + done/failed) per rolling hour, one shared budget (C37).
+notify_rate_per_hour = 20
+# Default question lifetime in seconds (60..604800); an expired question is
+# never auto-answered.
+question_ttl_seconds = 86400
+# Notifier bearer token: only valid on /v1/notifier/*, must differ from the
+# admin token file (C33, C36).
+notifier_token_file = "/etc/preview-dashboard/notifier.token"
+# Telegram bot token, read only by the notifier (C36).
+telegram_token_file = "/etc/preview-dashboard/telegram.token"
+
+# --- Claudia companion (ADR 0031; docs/security.md C44-C47) ---------------
+# Off by default; needs notify_enabled = true. Env may only switch it off.
+claudia_enabled = false
+# The Claudia host's bearer token: only valid on /v1/claudia/* (C45).
+claudia_token_file = "/etc/preview-dashboard/claudia.token"
+# TOTP step-up secret, read by the admin only: root:pdash-totp 0640, a group
+# with pdash-admin as its only member (never the shared "pdash" group). Create
+# it with `preview-dashboard claudia totp setup --group pdash-totp` and run
+# serve-admin with `--token-group totp=pdash-totp` (C47, ADR 0035).
+totp_secret_file = "/etc/preview-dashboard/totp.secret"
+
+# --- Knowledge map (viewer, read only; docs/security.md C57) ---------------
+# Config file only (env can't set these). Unset = the map is off (404).
+# The KB root must be root-owned and not group/world-writable; the viewer
+# reads it through group pdash-kb and never writes.
+# kb_root = "/var/lib/claudia-kb"
+# The admin's pending-approvals snapshot; unset or invalid = "nothing waiting".
+# claudia_approvals_snapshot = "/var/lib/preview-dashboard/claudia-view/pending-approvals.json"

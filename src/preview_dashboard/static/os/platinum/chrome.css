@@ -1,0 +1,381 @@
+/*
+  os/platinum/chrome.css - Platinum's signature look on top of the OS-neutral app.css: bevels and
+  hard offset shadows, pinstriped title bars and their square boxes, the black-ruled menu bar,
+  white desk-icon labels, balloon tails, popup end caps, etched separators, and the background
+  set. Every rule is scoped to :root[data-os="platinum"] (docs/frontend-os.md); tokens only.
+*/
+
+/* OS-private token: the active title bar's pinstripes. */
+:root[data-os="platinum"] {
+  --titlebar-stripes: repeating-linear-gradient(
+    to bottom,
+    var(--color-bevel-light) 0 1px,
+    var(--color-window-shade) 1px 2px,
+    var(--color-window) 2px 3px
+  );
+}
+
+/* --- menu bar: the neutral shell bar with a black rule and a top highlight --- */
+
+:root[data-os="platinum"] .shell-bar {
+  border-bottom: var(--border-width) solid var(--color-text);
+  box-shadow: inset 0 -1px 0 var(--color-window), inset 0 1px 0 var(--color-bevel-light);
+}
+
+/* --- desktop icons: labels sit on a white box, the current one highlighted --- */
+
+:root[data-os="platinum"] .desk-icon-label {
+  padding: 1px var(--space-1);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+:root[data-os="platinum"] .desk-icon[aria-current="page"] .desk-icon-label {
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+}
+
+/* --- windows: bevelled frame, pinstriped title bar, square boxes --- */
+
+:root[data-os="platinum"] .window {
+  box-shadow: var(--bevel-raised), var(--shadow-raised);
+}
+
+:root[data-os="platinum"] .titlebar {
+  justify-content: center;
+  height: var(--titlebar-height);
+  margin: 3px 3px 0;
+  padding: 0 calc(var(--space-6) + var(--space-1));
+  background: var(--titlebar-stripes);
+  background-clip: content-box;
+}
+
+:root[data-os="platinum"] .titlebar-title {
+  padding: 0 var(--space-3);
+  background: var(--color-window);
+}
+
+/* Title-bar boxes: the element is the hit area, ::before draws the 14px bevelled box. The shade
+   box (.box-shade) is added by fx/shade.js; the close box is the neutral close control. */
+:root[data-os="platinum"] .titlebar-close,
+:root[data-os="platinum"] .box {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  transform: translateY(-50%);
+}
+
+:root[data-os="platinum"] .titlebar-close::before,
+:root[data-os="platinum"] .box::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--color-window);
+  border: var(--border-width) solid var(--color-border-strong);
+  box-shadow: var(--bevel-raised);
+}
+
+:root[data-os="platinum"] .titlebar-close {
+  /* A real control (back to the list): 44px target around the small box. */
+  left: calc(3px - (var(--tap-target) - 14px) / 2);
+  width: var(--tap-target);
+  height: var(--tap-target);
+}
+
+:root[data-os="platinum"] .titlebar-close::before {
+  inset: calc((var(--tap-target) - 14px) / 2);
+}
+
+:root[data-os="platinum"] .titlebar-close:active::before {
+  box-shadow: var(--bevel-pressed);
+}
+
+:root[data-os="platinum"] .box-shade {
+  right: 3px;
+}
+
+:root[data-os="platinum"] .box-shade::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: 5px;
+  height: 4px;
+  border-top: var(--border-width) solid var(--color-border-strong);
+  border-bottom: var(--border-width) solid var(--color-border-strong);
+}
+
+:root[data-os="platinum"] .inset,
+:root[data-os="platinum"] .screen {
+  box-shadow: var(--bevel-sunken);
+}
+
+/* --- balloons: hard shadow; the hint balloon gets a pixel-edged tail --- */
+
+:root[data-os="platinum"] .balloon,
+:root[data-os="platinum"] .version-notice,
+:root[data-os="platinum"] .balloon-help {
+  box-shadow: var(--shadow-raised);
+}
+
+:root[data-os="platinum"] .balloon-help::before {
+  content: "";
+  position: absolute;
+  left: var(--space-3);
+  width: 10px;
+  height: 6px;
+  background: var(--color-warning-soft);
+}
+
+:root[data-os="platinum"] .balloon-help[data-tail="top"]::before {
+  top: -6px;
+  border-top: var(--border-width) solid var(--color-text);
+  border-left: var(--border-width) solid var(--color-text);
+  border-right: var(--border-width) solid var(--color-text);
+  clip-path: polygon(0 100%, 50% 0, 100% 100%);
+}
+
+:root[data-os="platinum"] .balloon-help[data-tail="bottom"]::before {
+  bottom: -6px;
+  border-bottom: var(--border-width) solid var(--color-text);
+  border-left: var(--border-width) solid var(--color-text);
+  border-right: var(--border-width) solid var(--color-text);
+  clip-path: polygon(0 0, 50% 100%, 100% 0);
+}
+
+/* --- buttons and popups: raised bevels, pressed bevels, the ringed default button --- */
+
+:root[data-os="platinum"] .button {
+  box-shadow: var(--bevel-raised);
+}
+
+:root[data-os="platinum"] .button:active {
+  background: var(--color-window-shade);
+  box-shadow: var(--bevel-pressed);
+}
+
+/* The default button: thick rounded ring around the primary action. */
+:root[data-os="platinum"] .button-primary {
+  margin: 5px;
+  box-shadow: var(--bevel-raised), var(--ring-default);
+}
+
+:root[data-os="platinum"] .button-primary:active {
+  box-shadow: var(--bevel-pressed), var(--ring-default);
+}
+
+:root[data-os="platinum"] .select {
+  box-shadow: var(--bevel-raised), 1px 1px 0 var(--color-border-strong);
+}
+
+/* The popup's end cap: a divider line left of the pixel double arrow. */
+:root[data-os="platinum"] .popup::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: var(--space-6);
+  border-left: var(--border-width) solid var(--color-border-strong);
+  pointer-events: none;
+}
+
+:root[data-os="platinum"] .stage-close {
+  box-shadow: var(--bevel-raised), var(--shadow-overlay);
+}
+
+/* --- menus: context menu, shell-bar drop-downs --- */
+
+:root[data-os="platinum"] .ctx-menu {
+  box-shadow: var(--bevel-raised), var(--shadow-overlay);
+}
+
+:root[data-os="platinum"] .ctx-menu-sep {
+  box-shadow: 0 1px 0 var(--color-bevel-light);
+}
+
+:root[data-os="platinum"] .shell-menu {
+  box-shadow: var(--shadow-raised);
+}
+
+/* --- Finder list and Get Info: etched separators and bevelled column heads --- */
+
+:root[data-os="platinum"] .finder-header,
+:root[data-os="platinum"] .info-top {
+  box-shadow: 0 1px 0 var(--color-bevel-light);
+}
+
+:root[data-os="platinum"] .list-head .cell {
+  border-right: var(--border-width) solid var(--color-bevel-dark);
+  box-shadow: inset 1px 1px 0 var(--color-bevel-light);
+}
+
+:root[data-os="platinum"] .list-head .cell:last-child {
+  border-right: 0;
+}
+
+/* Group box ("Files"): etched border with the title sitting on the line. */
+:root[data-os="platinum"] .group {
+  box-shadow: inset 1px 1px 0 var(--color-bevel-light), 1px 1px 0 var(--color-bevel-light);
+}
+
+/* --- alerts, dialog, toast: raised panels with hard shadows --- */
+
+:root[data-os="platinum"] .dialog {
+  box-shadow: var(--bevel-raised), var(--shadow-overlay);
+}
+
+:root[data-os="platinum"] .toast {
+  box-shadow: var(--shadow-overlay);
+}
+
+/* --- knowledge map: Finder label colours on pixel-edged dots, sunken map and reader --- */
+
+/* OS-private tokens: the eight category colours, after the Mac OS 8 Finder labels (Essential,
+   Hot, In Progress, Cool, Personal, Project 1, Project 2), muted to Sage & stone. */
+:root[data-os="platinum"] {
+  --kmap-c0: #5b7262;
+  --kmap-c1: #b8793a;
+  --kmap-c2: #9a4540;
+  --kmap-c3: #8f5a82;
+  --kmap-c4: #3f7f8c;
+  --kmap-c5: #4f5f9a;
+  --kmap-c6: #6f8a3a;
+  --kmap-c7: #7a5f45;
+}
+
+/* The shortcut reads like a menu title: highlighted while the map is open. */
+:root[data-os="platinum"] .shell-link:active {
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+}
+
+:root[data-os="platinum"] .kmap-search {
+  border-radius: 0;
+  box-shadow: var(--bevel-sunken);
+}
+
+/* The View buttons press in, like a Platinum segmented control. */
+:root[data-os="platinum"] .kmap-view[aria-pressed="true"] {
+  background: var(--color-window-shade);
+  box-shadow: var(--bevel-pressed);
+  color: var(--color-text);
+}
+
+:root[data-os="platinum"] .kmap-panel {
+  box-shadow: var(--bevel-sunken);
+}
+
+/* Dots keep hard pixel edges, like 1998 QuickDraw ovals. */
+:root[data-os="platinum"] .kmap-dot,
+:root[data-os="platinum"] .kmap-ring {
+  shape-rendering: crispEdges;
+}
+
+:root[data-os="platinum"] .kmap-dot {
+  stroke: var(--color-text);
+}
+
+:root[data-os="platinum"] .kmap-node.is-selected .kmap-label {
+  fill: var(--color-accent);
+  font-weight: var(--font-weight-strong);
+}
+
+:root[data-os="platinum"] .kmap-swatch {
+  box-shadow: var(--bevel-raised);
+}
+
+:root[data-os="platinum"] .kmap-node[data-cat="0"] .kmap-dot,
+:root[data-os="platinum"] .kmap-swatch[data-cat="0"] {
+  fill: var(--kmap-c0);
+  background: var(--kmap-c0);
+}
+
+:root[data-os="platinum"] .kmap-node[data-cat="1"] .kmap-dot,
+:root[data-os="platinum"] .kmap-swatch[data-cat="1"] {
+  fill: var(--kmap-c1);
+  background: var(--kmap-c1);
+}
+
+:root[data-os="platinum"] .kmap-node[data-cat="2"] .kmap-dot,
+:root[data-os="platinum"] .kmap-swatch[data-cat="2"] {
+  fill: var(--kmap-c2);
+  background: var(--kmap-c2);
+}
+
+:root[data-os="platinum"] .kmap-node[data-cat="3"] .kmap-dot,
+:root[data-os="platinum"] .kmap-swatch[data-cat="3"] {
+  fill: var(--kmap-c3);
+  background: var(--kmap-c3);
+}
+
+:root[data-os="platinum"] .kmap-node[data-cat="4"] .kmap-dot,
+:root[data-os="platinum"] .kmap-swatch[data-cat="4"] {
+  fill: var(--kmap-c4);
+  background: var(--kmap-c4);
+}
+
+:root[data-os="platinum"] .kmap-node[data-cat="5"] .kmap-dot,
+:root[data-os="platinum"] .kmap-swatch[data-cat="5"] {
+  fill: var(--kmap-c5);
+  background: var(--kmap-c5);
+}
+
+:root[data-os="platinum"] .kmap-node[data-cat="6"] .kmap-dot,
+:root[data-os="platinum"] .kmap-swatch[data-cat="6"] {
+  fill: var(--kmap-c6);
+  background: var(--kmap-c6);
+}
+
+:root[data-os="platinum"] .kmap-node[data-cat="7"] .kmap-dot,
+:root[data-os="platinum"] .kmap-swatch[data-cat="7"] {
+  fill: var(--kmap-c7);
+  background: var(--kmap-c7);
+}
+
+/* --- the background set (os/platinum/backgrounds.js): gradients only, applied to body by
+   os/background.js so the pattern fills the whole viewport (W1 item 6). "standard" repeats the
+   token default; the others replace its image and keep the body's tile size. --- */
+
+:root[data-os="platinum"] body[data-background="standard"] {
+  background-image: var(--desktop-pattern);
+  background-size: var(--desktop-pattern-size);
+  background-position: var(--desktop-pattern-position);
+}
+
+:root[data-os="platinum"] body[data-background="pinstripe"] {
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--color-bevel-light) 0 1px,
+    var(--color-bg) 1px 6px
+  );
+}
+
+:root[data-os="platinum"] body[data-background="weave"] {
+  background-image:
+    repeating-linear-gradient(45deg, var(--color-desktop-dot) 0 2px, transparent 2px 8px),
+    repeating-linear-gradient(-45deg, var(--color-desktop-dot) 0 2px, transparent 2px 8px);
+}
+
+:root[data-os="platinum"] body[data-background="waves"] {
+  background-image: repeating-radial-gradient(
+    circle at 50% 50%,
+    var(--color-desktop-dot) 0 1px,
+    transparent 1px 10px
+  );
+}
+
+:root[data-os="platinum"] body[data-background="zen"] {
+  background-image: radial-gradient(var(--color-desktop-dot) 2px, transparent 2.5px);
+  background-size: 24px 24px;
+}
+
+:root[data-os="platinum"] body[data-background="static"] {
+  background-image:
+    linear-gradient(45deg, var(--color-desktop-dot) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--color-desktop-dot) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--color-desktop-dot) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--color-desktop-dot) 75%);
+  background-size: 6px 6px;
+  background-position: 0 0, 0 3px, 3px -3px, -3px 0;
+}

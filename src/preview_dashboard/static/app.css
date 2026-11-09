@@ -1,0 +1,1810 @@
+/*
+  OS-neutral dashboard layout and components: shell bar, desktop icons, windows (list, info,
+  alerts), controls - structure plus the flat, token-driven look every OS starts from. Each OS's
+  signature (bevels, shadows, textures, decorations) lives in os/<name>/chrome.css
+  (docs/frontend-os.md). Uses ONLY the contract tokens (docs/frontend.md#theme-tokens): no
+  literal colors, fonts or shadows here. Phone first; wider screens add columns.
+*/
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+html.has-overlay {
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-body);
+  background-color: var(--color-bg);
+  background-image: var(--desktop-pattern);
+  background-size: var(--desktop-pattern-size);
+  background-position: var(--desktop-pattern-position);
+}
+
+a {
+  color: inherit;
+}
+
+h1,
+h2,
+h3 {
+  line-height: var(--line-height-tight);
+  letter-spacing: var(--letter-spacing-heading);
+}
+
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.main:focus {
+  outline: none;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+bdi {
+  unicode-bidi: isolate;
+}
+
+.sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Pixel icons: never smoothed. */
+.icon,
+.icon-sm,
+.icon-lg,
+.pin,
+.sort-dir,
+.popup-arrow,
+.grow {
+  flex: none;
+  display: block;
+  shape-rendering: crispEdges;
+}
+
+.icon {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.icon-sm {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+}
+
+.icon-lg {
+  width: var(--icon-size-lg);
+  height: var(--icon-size-lg);
+}
+
+/* Sprite fills an OS may recolour (index.html symbols carry these classes instead of a fill). */
+.ic-accent {
+  fill: var(--icon-accent);
+}
+
+.ic-folder {
+  fill: var(--icon-folder);
+}
+
+.ic-folder-tab {
+  fill: var(--icon-folder-tab);
+}
+
+.ic-folder-shade {
+  fill: var(--icon-folder-shade);
+}
+
+/* --- shell bar: app name + slots an OS fills (docs/frontend.md hooks) --- */
+
+.shell-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: stretch;
+  min-height: calc(var(--topbar-height) + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) var(--space-2) 0;
+  background: var(--color-window);
+  font-family: var(--font-chrome);
+  font-size: var(--font-size-base);
+  white-space: nowrap;
+}
+
+.shell-app,
+.shell-clock {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+}
+
+.shell-app {
+  gap: var(--space-2);
+  font-weight: var(--font-weight-strong);
+}
+
+/* Empty slots take no room; a filled one stretches its content to the bar's height. */
+.shell-slot {
+  display: flex;
+  align-items: stretch;
+}
+
+.shell-clock {
+  margin-left: auto;
+}
+
+/* --- desktop: icons + window area --- */
+
+.desktop {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4);
+  max-width: var(--desktop-max-width);
+  margin: 0 auto;
+  padding: var(--space-4) var(--space-2) calc(var(--space-7) + env(safe-area-inset-bottom));
+}
+
+.desk-icons {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.desk-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  width: 5rem;
+  min-height: var(--tap-target);
+  padding: var(--space-1) 0;
+  text-decoration: none;
+}
+
+.desk-icon .icon-lg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.desk-icon-label {
+  display: block;
+  font-family: var(--font-chrome);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-tight);
+  text-align: center;
+}
+
+.desk-icon-label small {
+  display: block;
+  font-size: var(--font-size-xs);
+}
+
+.desk-icon-label small:empty {
+  display: none;
+}
+
+.desk-icon:focus-visible {
+  outline-color: var(--color-text);
+}
+
+.main {
+  min-width: 0;
+}
+
+.loading,
+.noscript {
+  display: inline-block;
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-surface);
+  font-family: var(--font-chrome);
+}
+
+/* --- windows --- */
+
+.window {
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+  background: var(--color-window);
+  border: var(--border-width) solid var(--color-border-strong);
+}
+
+/* Title bar: neutral parts only (optional close control, title); the OS sets its geometry. */
+.titlebar {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.titlebar-title {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  font-family: var(--font-chrome);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Close control (a link back): a 44px hit area with a plain cross until the OS draws its own. */
+.titlebar-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--tap-target);
+  min-height: var(--tap-target);
+  text-decoration: none;
+}
+
+.titlebar-close::before {
+  content: "\00d7";
+}
+
+.window-body {
+  padding: var(--space-1) var(--space-2) var(--space-2);
+}
+
+.inset {
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border-strong);
+}
+
+/* A yellow balloon-help note (trash explanation, older-version notice). */
+.balloon,
+.version-notice {
+  margin: var(--space-1) 0 var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-warning-soft);
+  border: var(--border-width) solid var(--color-text);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-sm);
+}
+
+/* --- Balloon Help hints (W1 item 1): positioned via CSSOM only in balloon.js
+   (left/top, JS property assignment - same rule as the context menu's popup,
+   CSP has no style-src 'unsafe-inline'). One shared balloon, pale yellow,
+   1px border; balloon.js sets data-tail="top|bottom" for the OS to draw a
+   tail pointing at whatever it describes; pointer-events: none so it never
+   steals the hover it's showing for. --- */
+.balloon-help {
+  position: fixed;
+  z-index: 350;
+  max-width: 16rem;
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-warning-soft);
+  border: var(--border-width) solid var(--color-text);
+  border-radius: var(--radius-lg);
+  font-family: var(--font-chrome);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-tight);
+  pointer-events: none;
+}
+
+.balloon-help[hidden] {
+  display: none;
+}
+
+/* --- buttons and controls --- */
+
+.button,
+.link-button,
+.file-action,
+.select {
+  font: inherit;
+  cursor: pointer;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--tap-target);
+  padding: 0 var(--space-4);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-window);
+  color: var(--color-text);
+  font-family: var(--font-chrome);
+  font-size: var(--font-size-base);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.button:disabled {
+  color: var(--color-bevel-dark);
+  cursor: progress;
+}
+
+.button-danger,
+.button-danger-quiet {
+  color: var(--color-danger);
+}
+
+.link-button,
+.file-action {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap-target);
+  padding: 0 var(--space-1);
+  border: 0;
+  background: none;
+  color: inherit;
+  font-family: var(--font-chrome);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.popup {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+}
+
+.select {
+  appearance: none;
+  -webkit-appearance: none;
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--tap-target);
+  padding: 0 calc(var(--space-6) + var(--space-3)) 0 var(--space-3);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-window);
+  color: var(--color-text);
+  font-family: var(--font-chrome);
+  /* 16px on phones: iOS Safari zooms into smaller focused controls. */
+  font-size: var(--font-size-control);
+  text-overflow: ellipsis;
+}
+
+.popup-arrow {
+  position: absolute;
+  top: 50%;
+  right: calc(var(--space-2) + 2px);
+  width: 9px;
+  height: 12px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+/* --- context menu (R4): right-click / long-press / "…" button / Menu key /Shift+F10 --- */
+
+.ctx-menu {
+  position: fixed;
+  z-index: 300;
+  min-width: 11rem;
+  max-width: 16rem;
+  padding: 3px;
+  background: var(--color-window);
+  border: var(--border-width) solid var(--color-border-strong);
+  font-family: var(--font-chrome);
+  font-size: var(--font-size-base);
+}
+
+.ctx-menu-item {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap-target);
+  padding: 0 var(--space-3);
+  color: var(--color-text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ctx-menu-item.is-danger {
+  color: var(--color-danger);
+}
+
+.ctx-menu-item[aria-disabled="true"] {
+  color: var(--color-bevel-dark);
+  cursor: default;
+}
+
+.ctx-menu-item:not([aria-disabled="true"]):hover,
+.ctx-menu-item:not([aria-disabled="true"]):focus-visible {
+  outline: none;
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+}
+
+.ctx-menu-sep {
+  margin: 3px var(--space-1);
+  border: 0;
+  border-top: var(--border-width) solid var(--color-bevel-dark);
+}
+
+@media (min-width: 52rem) and (pointer: fine) {
+  .ctx-menu-item {
+    min-height: 1.75rem;
+  }
+}
+
+/* --- Finder list window --- */
+
+.finder-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-2);
+  border-bottom: var(--border-width) solid var(--color-bevel-dark);
+}
+
+.finder-summary {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.show-menu {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-family: var(--font-chrome);
+}
+
+.fresh {
+  width: 100%;
+  margin-bottom: var(--space-2);
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* One grid for the header and every row: Name | Date on phones; Kind and Size join later. */
+.list-head-cells,
+.row-link {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 6rem;
+  align-items: center;
+}
+
+.list-head {
+  display: flex;
+  min-height: var(--titlebar-height);
+  background: var(--color-window);
+  border-bottom: var(--border-width) solid var(--color-border-strong);
+  font-family: var(--font-chrome);
+  font-size: var(--font-size-sm);
+}
+
+/* Mirrors li.row's a.row-link + button.row-more split, so the "…" column (a fixed width taken
+   out of the row) doesn't leave row-link narrower than list-head and throw the cells out of
+   line with their headers (list-head has no row-more of its own to steal that width back). */
+.list-head-cells {
+  flex: 1;
+  min-width: 0;
+}
+
+.list-head .cell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  align-self: stretch;
+}
+
+.list-head .cell-kind,
+.list-head .cell-size {
+  display: none;
+}
+
+.list-head .is-sorted {
+  background: var(--color-window-shade);
+}
+
+.sort-dir {
+  width: 9px;
+  height: 6px;
+}
+
+.cell {
+  min-width: 0;
+  padding: 0 var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row {
+  display: flex;
+  border-bottom: var(--border-width) solid var(--color-rule);
+}
+
+.row-link {
+  flex: 1;
+  min-width: 0;
+  min-height: 3.5rem;
+  color: inherit;
+  text-decoration: none;
+}
+
+/* The sorted (Date) column keeps a faint stripe, as in the Finder. */
+.row-link .cell-date {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  background: var(--color-surface-sunken);
+}
+
+.cell-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.cell-kind,
+.cell-size {
+  display: none;
+}
+
+.cell-size {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.row-text {
+  display: grid;
+  min-width: 0;
+}
+
+.row-title,
+.row-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A bundle's "N files · <kind>" under "Bundle" in the Kind column (feed.js). */
+.kind-detail {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.row-link:hover .kind-detail,
+.row-link:focus-visible .kind-detail,
+.row-link:active .kind-detail {
+  color: var(--color-accent-contrast);
+}
+
+.row-sub {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.row-pin {
+  flex: none;
+  display: flex;
+}
+
+.pin {
+  width: 13px;
+  height: 13px;
+}
+
+/* Folder rows at the root of the Feed window (backlog §7.1, feed.js `folderRow`) reuse the
+   item row grid (name/kind/size/date cells, row-sub on phones). They have no "…" button, so the
+   end column is padding on the link (same widths as .row-more): the selection highlight then
+   covers the full row, not just the part left of a blank, unhighlighted spacer. */
+.row-folder .row-link {
+  padding-right: var(--tap-target);
+}
+
+@media (min-width: 52rem) and (pointer: fine) {
+  .row-folder .row-link {
+    padding-right: 2rem;
+  }
+}
+
+/* The row's "…" context-menu button: always present, so touch users have a click target too. */
+/* list-head-spacer shares only the width rules, so the header's blank end column always
+   matches row-more's actual rendered width (incl. the fine-pointer override below) exactly. */
+.row-more,
+.list-head-spacer {
+  flex: none;
+  width: var(--tap-target);
+  min-height: var(--tap-target);
+}
+
+.row-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: none;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-family: var(--font-chrome);
+  font-size: var(--font-size-lg);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.row-more:hover,
+.row-more:focus-visible {
+  color: var(--color-text);
+}
+
+@media (min-width: 52rem) and (pointer: fine) {
+  .row-more,
+  .list-head-spacer {
+    width: 2rem;
+    min-height: 2rem;
+  }
+}
+
+/* Selection highlight: hover, keyboard focus and press all show the Finder's accent row. */
+.row-link:hover,
+.row-link:focus-visible,
+.row-link:active {
+  outline: none;
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+}
+
+.row-link:hover .cell-date,
+.row-link:focus-visible .cell-date,
+.row-link:active .cell-date {
+  background: transparent;
+}
+
+.row-link:hover .row-sub,
+.row-link:focus-visible .row-sub,
+.row-link:active .row-sub {
+  color: var(--color-accent-contrast);
+}
+
+.row-link:hover .row-title,
+.row-link:focus-visible .row-title {
+  font-weight: var(--font-weight-medium);
+}
+
+.row-link:focus-visible {
+  box-shadow: inset 0 0 0 var(--focus-ring-width) var(--color-text);
+}
+
+.list-status:empty {
+  display: none;
+}
+
+.empty,
+.error {
+  margin: 0;
+  padding: var(--space-6) var(--space-4);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.error {
+  color: var(--color-danger);
+}
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: var(--space-6);
+  padding-top: var(--space-1);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.statusbar-text {
+  margin-right: auto;
+}
+
+.grow {
+  align-self: flex-end;
+  width: 15px;
+  height: 15px;
+}
+
+/* --- Get Info window --- */
+
+.info-body {
+  padding: var(--space-3);
+}
+
+/* Back button row above the item header (nav.js); the folder window's sits in .finder-header. */
+.info-nav {
+  display: flex;
+  padding-bottom: var(--space-2);
+}
+
+.info-nav:empty {
+  display: none;
+}
+
+.back-button {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.info-top {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: var(--border-width) solid var(--color-bevel-dark);
+}
+
+.info-heading {
+  min-width: 0;
+}
+
+.item-title {
+  margin: 0;
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.item-desc {
+  margin: var(--space-1) 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 12em;
+  overflow: auto;
+}
+
+.info-notice:empty {
+  display: none;
+}
+
+.info-notice .version-notice {
+  margin: var(--space-3) 0 0;
+}
+
+.item-preview {
+  margin: var(--space-3) 0;
+}
+
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.preview-label {
+  min-width: 0;
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preview-actions {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+}
+
+.screen {
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border-strong);
+}
+
+.preview-empty {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: start;
+  margin: 0;
+  padding: var(--space-5) var(--space-4);
+  color: var(--color-text-muted);
+}
+
+.preview-empty p {
+  margin: 0;
+}
+
+.item-preview > .preview-empty {
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border-strong);
+}
+
+/* stage: the area holding one preview; .is-expanded turns it into a full-screen overlay */
+
+.stage {
+  position: relative;
+  background: var(--color-surface);
+}
+
+.stage-media {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-media-bg);
+  min-height: 12rem;
+}
+
+.stage-hit {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.stage-image {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  margin: 0 auto;
+  object-fit: contain;
+}
+
+.stage-video {
+  display: block;
+  width: 100%;
+  max-height: 70vh;
+  background: var(--color-media-bg);
+}
+
+.stage-audio-wrap {
+  padding: var(--space-5) var(--space-4);
+}
+
+.stage-audio {
+  width: 100%;
+}
+
+.stage-frame {
+  display: block;
+  width: 100%;
+  height: 70vh;
+  border: 0;
+  background: var(--color-surface);
+}
+
+.stage.is-expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  background: var(--color-overlay);
+  overflow: auto;
+}
+
+.stage.is-expanded .stage-frame {
+  flex: 1;
+  height: auto;
+}
+
+.stage.is-expanded .stage-hit {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stage.is-expanded .stage-image {
+  max-height: 100%;
+  max-width: 100%;
+}
+
+.stage.is-expanded.is-zoomed .stage-hit {
+  display: block;
+  cursor: zoom-out;
+}
+
+.stage.is-expanded.is-zoomed .stage-image {
+  max-width: none;
+  max-height: none;
+}
+
+.stage-close {
+  align-self: flex-end;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  min-height: var(--tap-target);
+  margin: var(--space-2);
+  padding: 0 var(--space-4);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-window);
+  color: var(--color-text);
+  font-family: var(--font-chrome);
+  font-size: var(--font-size-base);
+  cursor: pointer;
+}
+
+/* Get Info fields: right-aligned pixel labels, values beside them. */
+.fields {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.field {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.field dt {
+  text-align: right;
+  font-family: var(--font-chrome);
+}
+
+.field dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.version-switcher {
+  align-items: center;
+}
+
+/* Popup + "Delete old versions" side by side; the button wraps under it on narrow screens. */
+.version-switcher dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.label-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: var(--space-2);
+  vertical-align: -1px;
+  border: var(--border-width) solid var(--color-border-strong);
+  background: var(--color-accent);
+}
+
+.warning-text {
+  color: var(--color-warning-text);
+}
+
+/* Group box ("Files"): etched border with the title sitting on the line. */
+.group {
+  position: relative;
+  margin: var(--space-5) 0 var(--space-4);
+  padding: var(--space-3) var(--space-2) var(--space-1);
+  border: var(--border-width) solid var(--color-bevel-dark);
+}
+
+.group-title {
+  position: absolute;
+  top: calc(-0.5 * var(--line-height-tight) * 1em);
+  left: var(--space-2);
+  margin: 0;
+  padding: 0 var(--space-2);
+  background: var(--color-window);
+  font-family: var(--font-chrome);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-regular);
+}
+
+.files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-2);
+  padding: var(--space-1) 0;
+  font-size: var(--font-size-sm);
+  border-bottom: var(--border-width) dotted var(--color-bevel-dark);
+}
+
+.file:last-child {
+  border-bottom: 0;
+}
+
+.file.is-selected {
+  background: var(--color-accent-soft);
+}
+
+.file-name {
+  flex: 1 1 8rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.file-meta {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The entry file's marker in a multi-file item (item.js): a small outlined tag. */
+.file-entry {
+  flex: none;
+  padding: 0 var(--space-1);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.file-actions {
+  display: flex;
+  margin-left: auto;
+}
+
+.file-action[aria-pressed="true"] {
+  text-decoration: none;
+  font-weight: var(--font-weight-strong);
+}
+
+.item-actions .button-danger-quiet {
+  margin-right: auto;
+}
+
+/* --- alerts and the confirm dialog --- */
+
+.window-alert {
+  max-width: 30rem;
+  padding: var(--space-4);
+}
+
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.alert-text {
+  min-width: 0;
+}
+
+.alert-title {
+  margin: 0 0 var(--space-1);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-medium);
+}
+
+.alert-body {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.dialog {
+  width: min(28rem, calc(100vw - 2 * var(--space-4)));
+  padding: var(--space-4);
+  border: var(--border-width) solid var(--color-border-strong);
+  background: var(--color-window);
+  color: var(--color-text);
+}
+
+.dialog::backdrop {
+  background: var(--color-overlay);
+}
+
+/* --- toast --- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--space-5) + env(safe-area-inset-bottom));
+  z-index: 200;
+  max-width: calc(100vw - 2 * var(--space-4));
+  padding: var(--space-2) var(--space-4);
+  border: var(--border-width) solid var(--color-text);
+  background: var(--color-warning-soft);
+  color: var(--color-text);
+  font-family: var(--font-chrome);
+  transform: translateX(-50%);
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.toast.is-visible {
+  visibility: visible;
+}
+
+.toast:empty {
+  display: none;
+}
+
+/* --- wider screens --- */
+
+@media (min-width: 37.5rem) {
+  .desktop {
+    grid-template-columns: minmax(0, 1fr) var(--desk-icons-width);
+    grid-template-areas: "main icons";
+    gap: var(--space-5);
+    padding: var(--space-6) var(--space-5) var(--space-7);
+  }
+
+  .desk-icons {
+    grid-area: icons;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--space-5);
+  }
+
+  .desk-icon {
+    width: var(--desk-icons-width);
+  }
+
+  .desk-icon .icon-lg {
+    width: var(--icon-size-lg);
+    height: var(--icon-size-lg);
+  }
+
+  .main {
+    grid-area: main;
+  }
+
+  .list-head-cells,
+  .row-link {
+    grid-template-columns: minmax(0, 1fr) 8rem 7rem;
+  }
+
+  .cell-kind {
+    display: block;
+  }
+
+  .list-head .cell-kind {
+    display: flex;
+  }
+
+  .row-sub {
+    display: none;
+  }
+
+  .row-link {
+    min-height: var(--tap-target);
+  }
+
+  .fresh {
+    width: auto;
+  }
+
+  .field {
+    grid-template-columns: 6.5rem minmax(0, 1fr);
+  }
+
+  .window-body {
+    padding: var(--space-1) var(--space-2) var(--space-2);
+  }
+
+  .info-body {
+    padding: var(--space-3) var(--space-4) var(--space-4);
+  }
+
+  .window-alert {
+    margin-top: var(--space-7);
+  }
+}
+
+@media (min-width: 52rem) {
+  .list-head-cells,
+  .row-link {
+    grid-template-columns: minmax(0, 1fr) 8rem 6rem 7.5rem;
+  }
+
+  .cell-size {
+    display: block;
+  }
+
+  .list-head .cell-size {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .select {
+    font-size: var(--font-size-base);
+    min-height: 2rem;
+  }
+
+  /* Pointer screens: controls may be smaller than on touch, but keep 32px. */
+  .button {
+    min-height: 2.25rem;
+  }
+
+  .file-action,
+  .link-button {
+    min-height: 2rem;
+  }
+}
+
+@media (min-width: 52rem) and (pointer: coarse) {
+  .select,
+  .button,
+  .file-action,
+  .link-button {
+    min-height: var(--tap-target);
+  }
+
+  .select {
+    font-size: var(--font-size-control);
+  }
+}
+
+/* --- shell bar: the Knowledge map shortcut (icon only on phones; the label stays its name) --- */
+
+.shell-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-width: var(--tap-target);
+  padding: 0 var(--space-2);
+  color: inherit;
+  text-decoration: none;
+}
+
+.shell-link[aria-current="page"] {
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+}
+
+.shell-link-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* --- knowledge map window (knowledge-map.js; security.md C57) --- */
+
+.window-kmap {
+  max-width: none;
+}
+
+.kmap-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.kmap-search {
+  width: 14rem;
+  max-width: 100%;
+  min-width: 0;
+  min-height: var(--tap-target);
+  padding: 0 var(--space-2);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: var(--font-size-control);
+}
+
+.kmap-views {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.kmap-view[aria-pressed="true"] {
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+}
+
+/* Pending approvals: read only, the owner's cross-check of a phone prompt. */
+.kmap-approvals {
+  margin-top: var(--space-4);
+}
+
+.kmap-approval-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kmap-approval {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) 0;
+  border-bottom: var(--border-width) dotted var(--color-bevel-dark);
+}
+
+.kmap-approval:last-child {
+  border-bottom: 0;
+}
+
+.kmap-approval-text {
+  font-weight: var(--font-weight-strong);
+  overflow-wrap: anywhere;
+}
+
+.kmap-approval-meta {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.kmap-approval-id {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.kmap-approvals-none {
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.kmap-approvals-note {
+  margin: var(--space-1) 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* Stage: the map (or the list) beside the note panel; phones stack and swap them. */
+.kmap-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2);
+}
+
+.kmap-map {
+  position: relative;
+  min-height: 24rem;
+  background-color: var(--color-surface);
+  background-image: radial-gradient(var(--color-rule) 1px, transparent 1.5px);
+  background-size: 16px 16px;
+}
+
+.kmap-svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.kmap-svg:focus-visible {
+  outline-offset: -3px;
+}
+
+.kmap-message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  color: var(--color-text-muted);
+  font-family: var(--font-chrome);
+  text-align: center;
+}
+
+.kmap-index {
+  min-height: 12rem;
+  padding: var(--space-2);
+  overflow: auto;
+}
+
+.kmap-panel {
+  min-width: 0;
+  padding: var(--space-3);
+  overflow: auto;
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border-strong);
+  overflow-wrap: anywhere;
+}
+
+.kmap-panel-hint {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.kmap-panel-nav {
+  display: flex;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+/* The map's dots and lines: neutral look (every dot the accent); each OS colours categories. */
+.kmap-edge {
+  stroke: var(--color-bevel-dark);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+
+.kmap-edge[data-kind="tag"] {
+  stroke: var(--color-border);
+  stroke-dasharray: 2 3;
+}
+
+/* knowledge-map.js sets the layer's font-size per zoom (CSSOM) so labels keep their size. */
+.kmap-nodes {
+  font-size: var(--font-size-sm);
+}
+
+.kmap-node {
+  cursor: pointer;
+}
+
+.kmap-dot {
+  fill: var(--icon-accent);
+  stroke: var(--color-border-strong);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+
+.kmap-ring {
+  fill: none;
+  stroke: none;
+}
+
+/* Changed this week: a still dotted ring around the dot. */
+.kmap-node.is-recent .kmap-ring {
+  stroke: var(--color-text);
+  stroke-width: 1.5px;
+  stroke-dasharray: 2 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.kmap-shine {
+  display: none;
+}
+
+.kmap-node.is-selected .kmap-dot {
+  stroke-width: 3px;
+}
+
+.kmap-label {
+  display: none;
+  fill: var(--color-text);
+  font-family: var(--font-chrome);
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: var(--color-surface);
+  stroke-width: 0.3em;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.kmap-node.is-hub .kmap-label,
+.kmap-node.is-near .kmap-label,
+.kmap-svg.is-zoomed .kmap-label {
+  display: inline;
+}
+
+.kmap-svg.has-focus .kmap-node:not(.is-near),
+.kmap-svg.has-focus .kmap-edge:not(.is-near) {
+  opacity: 0.25;
+}
+
+.kmap-node.is-filtered,
+.kmap-edge.is-filtered {
+  opacity: 0.1;
+}
+
+.kmap-swatch {
+  display: inline-block;
+  flex: none;
+  width: 0.75rem;
+  height: 0.75rem;
+  border: var(--border-width) solid var(--color-border-strong);
+  background: var(--icon-accent);
+}
+
+/* List by category (phones, and the List view). */
+.kmap-section + .kmap-section {
+  margin-top: var(--space-3);
+}
+
+.kmap-section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-1);
+  font-family: var(--font-chrome);
+  font-size: var(--font-size-base);
+}
+
+.kmap-count {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-regular);
+}
+
+.kmap-entries {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kmap-entry-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--tap-target);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-bottom: var(--border-width) solid var(--color-rule);
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kmap-entry-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.kmap-new {
+  flex: none;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.kmap-entry-button:hover,
+.kmap-entry.is-selected .kmap-entry-button {
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+}
+
+.kmap-entry-button:hover .kmap-new,
+.kmap-entry.is-selected .kmap-new {
+  color: inherit;
+}
+
+/* The note reader: untrusted text laid out as plain blocks (kmap-note.js). */
+.kmap-note-title {
+  margin: 0 0 var(--space-1);
+  font-family: var(--font-chrome);
+  font-size: var(--font-size-xl);
+}
+
+.kmap-note-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.kmap-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kmap-tag {
+  padding: 0 var(--space-2);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.kmap-note-body {
+  max-width: var(--reading-max-width);
+  margin-top: var(--space-3);
+}
+
+.kmap-heading {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--font-size-lg);
+}
+
+.kmap-para,
+.kmap-list,
+.kmap-quote,
+.kmap-code {
+  margin: 0 0 var(--space-2);
+}
+
+.kmap-list {
+  padding-left: var(--space-5);
+}
+
+.kmap-quote {
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.kmap-code {
+  padding: var(--space-2);
+  overflow: auto;
+  background: var(--color-surface-sunken);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  white-space: pre-wrap;
+}
+
+.kmap-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent);
+  font: inherit;
+  text-align: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.kmap-link:hover {
+  color: var(--color-accent-hover);
+}
+
+.kmap-link.is-missing {
+  color: var(--color-text-muted);
+  text-decoration-style: dotted;
+  cursor: default;
+}
+
+.kmap-backlinks {
+  margin-top: var(--space-4);
+  padding-top: var(--space-2);
+  border-top: var(--border-width) solid var(--color-rule);
+}
+
+.kmap-backlinks-title {
+  margin: 0 0 var(--space-1);
+  font-family: var(--font-chrome);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-regular);
+}
+
+.kmap-backlink-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kmap-statusbar {
+  flex-wrap: wrap;
+}
+
+.kmap-zooms {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.kmap-zoom {
+  min-width: var(--tap-target);
+  padding: 0 var(--space-2);
+}
+
+/* Phones: no map (the list by category instead); an open note covers the list. */
+@media (max-width: 37.49rem) {
+  .kmap-map,
+  .kmap-views,
+  .kmap-zooms,
+  .kmap-close-note {
+    display: none;
+  }
+
+  .kmap-search {
+    flex: 1 1 10rem;
+    width: auto;
+  }
+
+  .kmap-stage.is-reading .kmap-index,
+  .kmap-stage:not(.is-reading) .kmap-panel {
+    display: none;
+  }
+}
+
+@media (min-width: 37.5rem) {
+  .shell-link-label {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+  }
+
+  .shell-link {
+    justify-content: flex-start;
+  }
+
+  .kmap-stage {
+    grid-template-columns: minmax(0, 1fr) minmax(15rem, 22rem);
+    height: clamp(26rem, calc(100vh - 22rem), 52rem);
+  }
+
+  .kmap-map {
+    min-height: 0;
+  }
+
+  .kmap-stage[data-mode="map"] .kmap-index,
+  .kmap-stage[data-mode="list"] .kmap-map,
+  .kmap-back-to-list {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}

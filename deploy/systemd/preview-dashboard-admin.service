@@ -1,0 +1,162 @@
+# preview-dashboard-admin.service — the local-only publish/edit API.
+# Binds its own Unix socket (never a TCP port); reachable only by uid 0
+# (tailscaled-independent: this is the MCP client, which Claude Code runs
+# as root on this host — docs/architecture.md "Processes", ADR 0003/0014).
+# Runs as pdash-admin:pdash so files it creates land group-`pdash` (the
+# viewer runs with the same effective group and reads them that way);
+# `interfaces/mcp/server.py` trusts that group by reading it straight off
+# the admin socket at runtime, never a hardcoded name (ADR 0013, ADR 0017 "G").
+
+[Unit]
+Description=Preview Dashboard admin API (publish/edit, Unix socket only)
+Documentation=file:///opt/preview-dashboard/docs/operations.md
+Documentation=file:///opt/preview-dashboard/docs/security.md
+After=network.target
+# No explicit ordering vs. the viewer/purge units: SQLite (WAL + BEGIN
+# IMMEDIATE + busy_timeout) is the only thing that ever needs to serialize
+# writes across these three processes, and it already does (C11, C24/C28).
+
+[Service]
+Type=simple
+User=pdash-admin
+Group=pdash
+UMask=0007
+
+# --- what to run -------------------------------------------------------
+# --allowed-peer-uid 0: the only legitimate caller of this socket is the
+# MCP server, which Claude Code spawns as root on this host (see
+# docs/architecture.md "Processes" and docs/security.md "Threat model").
+# The socket's own 0660 perms (bound by the app itself, C26) already keep
+# non-group members out; this SO_PEERCRED check (C26) pins the accepted
+# caller down to exactly uid 0, so even a future perms mistake, or another
+# member ever added to group `pdash`, still can't publish. If the MCP
+# server is ever run as a dedicated non-root user (docs/security.md "Known
+# limitations", C27 note), add that uid here too (repeatable flag) instead
+# of widening to "any local user".
+# --token-group admin=pdash: scoped to admin.token only (ADR 0024), explicit
+# though not load-bearing here (this process's own effective group is
+# already pdash, which C12 trusts for its own token) — kept for symmetry
+# with install.sh's check-config call, which runs as root and does need it.
+# PDASH_NOTIFIER_ADMIN_ARGS (N5): "-" makes the EnvironmentFile optional, so
+# a host without the notifier loads this unit unchanged. install.sh writes it
+# whenever the notifier is installed: "--notifier-peer-uid <pdash-notify
+# uid> --token-group notifier=pdash-notifytok" (the peer-uid scopes
+# /v1/notifier/* to that uid, ADR 0022; the scoped token group lets this
+# process read notifier.token and nothing else, C33/C36). UNBRACED on
+# purpose (S-B H1): systemd splits a lone `$VAR` word at whitespace into
+# zero or more arguments, while `${VAR}` is always exactly ONE argument --
+# an empty "" when unset, which serve-admin rejects (exit 2) on every host,
+# and one unparseable word when set.
+# --trusted-sidecar-uid ${PDASH_VIEWER_UID} (ADR 0025): pdash-viewer may own
+# the DB's -wal/-shm only (it recreates them when it opens the DB while no
+# admin connection is open); never the DB file or dirs (C24). Braced and the
+# env file required on purpose: unset -> "" -> serve-admin exits 2 (fail
+# closed, same as the viewer's --trusted-owner-uid).
+# PDASH_CLAUDIA_ADMIN_ARGS (M9, ADR 0036): same optional, UNBRACED pattern;
+# install.sh --claudia writes "--claudia-peer-uid 0 --token-group
+# claudia=pdash-claudiatok --token-group totp=pdash-totp" (the host runs as
+# root; each group is scoped to its one file, C45/C47). Zero words elsewhere.
+EnvironmentFile=/etc/preview-dashboard/viewer-uid.env
+EnvironmentFile=-/etc/preview-dashboard/notifier-admin.env
+EnvironmentFile=-/etc/preview-dashboard/claudia-admin.env
+ExecStart=/opt/preview-dashboard/.venv/bin/preview-dashboard serve-admin --allowed-peer-uid 0 --trusted-sidecar-uid ${PDASH_VIEWER_UID} --token-group admin=pdash $PDASH_NOTIFIER_ADMIN_ARGS $PDASH_CLAUDIA_ADMIN_ARGS
+# PDASH_NOTIFIER_ADMIN_ARGS above only scopes /v1/notifier/* (an HTTP-level
+# check, ADR 0022); the notifier process also has to reach this Unix socket
+# at the filesystem level to get that far. pdash-notify is deliberately NOT
+# in group `pdash` (it must never read admin.token, db/ or blobs/, C33), so
+# it has no access to this unit's own RuntimeDirectory (0750, group pdash)
+# by default. Grant exactly two POSIX ACL entries instead of widening any
+# group: traverse-only on the directory, then read+write on the socket file
+# once it exists (bounded 30 s poll — ExecStartPost runs right after fork,
+# before the app has necessarily bound it yet). A no-op wherever
+# pdash-notify doesn't exist (no notifier installed). install.sh refuses to
+# install the notifier without `setfacl` (S-B M3); should it still be
+# missing or fail, this logs why to the journal but never fails the admin
+# unit (`exit 0`): the notifier then fails closed (`verify_admin_socket`,
+# C12) and `deploy/check.sh` reports that pdash-notify can't reach the
+# socket. Every shell `$` is written `$$`: systemd expands `$NAME`/`${NAME}`
+# itself in Exec lines, even inside quotes, and would blank them out.
+ExecStartPost=/bin/sh -c '\
+    id -u pdash-notify >/dev/null 2>&1 || exit 0; \
+    d=/run/preview-dashboard; \
+    if ! command -v setfacl >/dev/null 2>&1; then \
+        echo "setfacl missing (apt install acl): pdash-notify cannot reach the admin socket" >&2; \
+        exit 0; \
+    fi; \
+    setfacl -m u:pdash-notify:X "$$d" || echo "setfacl on $$d failed" >&2; \
+    i=0; while [ "$$i" -lt 300 ] && [ ! -S "$$d/admin.sock" ]; do sleep 0.1; i=$$((i + 1)); done; \
+    if [ -S "$$d/admin.sock" ]; then \
+        setfacl -m u:pdash-notify:rw "$$d/admin.sock" || echo "setfacl on the admin socket failed" >&2; \
+    else \
+        echo "admin socket did not appear within 30 s: no ACL for pdash-notify" >&2; \
+    fi; \
+    exit 0'
+
+Restart=on-failure
+RestartSec=2s
+RestartSteps=5
+RestartMaxDelaySec=30s
+TimeoutStopSec=10s
+
+# --- filesystem ----------------------------------------------------------
+# StateDirectory creates/owns /var/lib/preview-dashboard as
+# pdash-admin:pdash (matches what install.sh pre-creates; same User/Group
+# here so systemd's "fix ownership on mismatch" behavior is a no-op, never
+# a surprise chown).
+StateDirectory=preview-dashboard
+StateDirectoryMode=0750
+RuntimeDirectory=preview-dashboard
+RuntimeDirectoryMode=0750
+WorkingDirectory=/opt/preview-dashboard
+ReadWritePaths=/var/lib/preview-dashboard
+ReadOnlyPaths=/etc/preview-dashboard
+InaccessiblePaths=/root /home
+# The admin never reads the knowledge base or the host's state (M9).
+InaccessiblePaths=-/var/lib/claudia-kb -/var/lib/claudia-host
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+
+# --- network: admin never talks to the network, only its own socket -----
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+
+# --- privilege / syscall surface -----------------------------------------
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# If startup ever fails under SIGSYS from uvloop/httptools (uvicorn[standard]
+# extras are compiled C extensions; not expected to need W+X pages, but
+# unverified on this host — docs/operations.md "Deployment" notes the
+# check to run), comment the next line out and use `MemoryDenyWriteExecute=no`.
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallArchitectures=native
+RemoveIPC=yes
+
+# --- resource limits -------------------------------------------------------
+MemoryMax=512M
+TasksMax=64
+LimitNOFILE=4096
+
+# --- logging: journald only, never a file (C29) --------------------------
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=preview-dashboard-admin
+
+[Install]
+WantedBy=multi-user.target

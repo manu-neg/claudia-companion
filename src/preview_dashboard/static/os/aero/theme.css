@@ -1,0 +1,123 @@
+/*
+  os/aero/theme.css - the Aero OS's design tokens: "Frutiger Aero", a sky-and-glass desktop in
+  the Windows Vista / 7 manner (design prototype 10). Token contract: docs/frontend.md#theme-tokens;
+  OS rules and contrast ratios: docs/frontend-os.md#aero. Light only. Catamaran comes from
+  fonts.css; the glass, gloss and motion details are private tokens in chrome.css.
+*/
+
+:root[data-os="aero"] {
+  color-scheme: light;
+
+  /* Surfaces: sky desktop, frosted windows, white document insets */
+  --color-bg: #6ec6f0;
+  --color-desktop-dot: #bde8fa;
+  --color-window: #eef7fd;
+  --color-window-shade: #d6edfa;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #f2f9fe;
+  --color-media-bg: #0a1a26;
+  --color-overlay: rgb(8 40 70 / 0.45);
+
+  /* Lines: soft blue edges instead of bevels */
+  --color-border: #b6d3e6;
+  --color-border-strong: #7fa9c4;
+  --color-rule: #e3f0f8;
+  --color-bevel-light: #ffffff;
+  --color-bevel-dark: #8cbcd8;
+  --border-width: 1px;
+
+  /* Text: deep sea ink */
+  --color-text: #0b3550;
+  --color-text-muted: #3b6580;
+
+  /* Accent: the pale Explorer selection (dark text stays on it), aqua focus */
+  --color-accent: #cce8ff;
+  --color-accent-hover: #b3dcfb;
+  --color-accent-contrast: #0b3550;
+  --color-accent-soft: #e5f3fd;
+  --color-focus: #0a6fa8;
+
+  /* States */
+  --color-danger: #c42b1c;
+  --color-danger-hover: #a3180c;
+  --color-danger-contrast: #ffffff;
+  --color-warning-soft: #fff9e0;
+  --color-warning-text: #7a4f00;
+  --color-success: #2a7d10;
+
+  /* Typography: Catamaran everywhere (chrome in 700/800), Segoe UI as the system fallback */
+  --font-chrome: "Catamaran", "Segoe UI", "Frutiger", system-ui, sans-serif;
+  --font-body: "Catamaran", "Segoe UI", "Frutiger", system-ui, -apple-system, Roboto, sans-serif;
+  --font-mono: ui-monospace, "Consolas", SFMono-Regular, Menlo, monospace;
+  --font-size-xs: 0.8125rem;
+  --font-size-sm: 0.875rem;
+  --font-size-base: 0.9375rem;
+  --font-size-lg: 1rem;
+  --font-size-xl: 1.375rem;
+  --font-size-2xl: 1.75rem;
+  --font-size-control: 1rem;
+  --font-weight-regular: 400;
+  --font-weight-medium: 700;
+  --font-weight-strong: 800;
+  --line-height-tight: 1.2;
+  --line-height-body: 1.45;
+  --letter-spacing-heading: -0.01em;
+
+  /* Spacing scale (4px base) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  /* Shape: rounded glass, pill buttons */
+  --radius-sm: 8px;
+  --radius-md: 22px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* Elevation: soft blue-tinted blur shadows; "bevels" are glossy highlights */
+  --shadow-raised: 0 12px 30px -12px rgb(10 70 110 / 0.45);
+  --shadow-overlay: 0 22px 48px -14px rgb(8 45 80 / 0.6), 0 2px 8px rgb(8 45 80 / 0.18);
+  --bevel-raised: inset 0 1px 0 rgb(255 255 255 / 0.9);
+  --bevel-pressed: inset 0 1px 4px rgb(0 50 90 / 0.35);
+  --bevel-sunken: inset 0 1px 3px rgb(0 50 90 / 0.14);
+  /* The default button's cyan halo (Vista's glowing default button) */
+  --ring-default: 0 0 0 1px #3a95d6, 0 0 8px 2px rgb(64 176 240 / 0.55);
+
+  /* Patterns: the sky itself (painted per background in chrome.css; this is the fallback) */
+  --desktop-pattern: linear-gradient(180deg, #2e9bdb 0, #6ec6f0 45%, #bde8fa 80%, #e8f8ff 100%);
+  --desktop-pattern-size: 100% 100%;
+  --desktop-pattern-position: 0 0;
+
+  /* Icons: aqua accent and Vista's manila folders */
+  --icon-accent: #1fa3e0;
+  --icon-folder: #f6d465;
+  --icon-folder-tab: #fffdf4;
+  --icon-folder-shade: #d9a93a;
+
+  /* Motion: soft, glassy ease-out (the rest of the motion set is in chrome.css) */
+  --motion-duration: 240ms;
+  --motion-ease: cubic-bezier(0.2, 0.9, 0.3, 1);
+
+  /* Layout */
+  --desktop-max-width: 90rem;
+  --content-max-width: 60rem;
+  --reading-max-width: 46rem;
+  --desk-icons-width: 6rem;
+  --icon-size-sm: 16px;
+  --icon-size: 32px;
+  --icon-size-lg: 48px;
+  --tap-target: 44px;
+  --focus-ring-width: 2px;
+  --topbar-height: 3.5rem;
+  --titlebar-height: 2.25rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-os="aero"] {
+    --motion-duration: 0ms;
+  }
+}

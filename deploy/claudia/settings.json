@@ -1,0 +1,44 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(//root/.claude/projects/*/memory/**)",
+      "Write(//root/.claude/projects/*/memory/**)",
+      "Edit(//**/.claude/settings*.json)",
+      "Write(//**/.claude/settings*.json)",
+      "Edit(//root/.claude/settings*.json)",
+      "Write(//root/.claude/settings*.json)",
+      "Edit(//etc/preview-dashboard/**)",
+      "Write(//etc/preview-dashboard/**)",
+      "Edit(//var/lib/claudia-kb/**)",
+      "Write(//var/lib/claudia-kb/**)",
+      "Edit(//etc/preview-dashboard/claudia-settings.json)",
+      "Write(//etc/preview-dashboard/claudia-settings.json)",
+      "Edit(//opt/preview-dashboard/.venv/bin/preview-dashboard-claudia-hook)",
+      "Write(//opt/preview-dashboard/.venv/bin/preview-dashboard-claudia-hook)",
+      "Edit(//opt/preview-dashboard/**)",
+      "Write(//opt/preview-dashboard/**)",
+      "Edit(//var/lib/claudia-host/*.*)",
+      "Write(//var/lib/claudia-host/*.*)",
+      "Edit(//var/lib/claudia-host/audit/**)",
+      "Write(//var/lib/claudia-host/audit/**)",
+      "Edit(//var/lib/claudia-host/voices/**)",
+      "Write(//var/lib/claudia-host/voices/**)",
+      "Read(//etc/preview-dashboard/**)",
+      "Read(//root/.claude/.credentials.json)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/preview-dashboard/.venv/bin/preview-dashboard-claudia-hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

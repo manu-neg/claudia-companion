@@ -1,0 +1,60 @@
+#!/usr/sbin/nft -f
+# preview-dashboard.nft — loopback firewall for the viewer's local ports
+# (docs/security.md C14, ADR 0002).
+#
+# Why: `viewer_host` is loopback-only (C1), but loopback is not a user
+# boundary — any local process, of any uid, can connect to 127.0.0.1.
+# Without this rule, any local non-root user could reach the viewer
+# directly and forge the `Tailscale-User-Login` header (C2), impersonating
+# the owner. Only `tailscaled` (which runs as root) is meant to reach
+# these ports, forwarding real tailnet connections after terminating TLS.
+#
+# Known limitation (documented, not a bug): root on this host can forge
+# local requests regardless of this rule (it can bind as uid 0 itself). A
+# fully privileged local attacker is out of scope (docs/security.md
+# "Known limitations", ADR 0002). If the installed `tailscale serve`
+# supports a `unix:` socket target, prefer that and keep this rule only as
+# a backstop (loopback TCP would then carry no legitimate traffic at all).
+#
+# Idempotent + atomic: `nft -f` APPENDS rules to an existing table, so the
+# file first declares the table (no-op if present), deletes it, then defines
+# it fresh — all in one nft transaction, so there is no window without the
+# rule and re-loading never duplicates rules. Only this uniquely named table
+# is touched: never `flush ruleset` (that would wipe tailscaled's rules).
+# Loaded/removed by preview-dashboard-firewall.service, not nftables.service.
+
+table inet preview_dashboard
+delete table inet preview_dashboard
+
+table inet preview_dashboard {
+	chain output {
+		type filter hook output priority filter; policy accept;
+
+		# Packets of an already-accepted connection don't need a fresh
+		# per-packet uid check: conntrack already vouches for them, and by
+		# the time a connection is established the accepting rule below has
+		# already run once.
+		ct state established,related accept
+
+		# New connections to the viewer's loopback ports: only a process
+		# running as uid 0 (tailscaled) may originate one.
+		oif "lo" tcp dport { 8787, 8788 } ct state new meta skuid 0 accept
+		oif "lo" tcp dport { 8787, 8788 } ct state new reject with tcp reset
+
+		# Same rule for the tailscale serve listeners: a connection from this
+		# host to its own tailnet address is attributed by tailscaled to the
+		# host's owner, so serve would add the owner's Tailscale-User-Login.
+		# Only root may originate those locally (unit 12 audit, High 1).
+		fib daddr type local tcp dport { 443, 8443 } ct state new meta skuid 0 accept
+		fib daddr type local tcp dport { 443, 8443 } ct state new reject with tcp reset
+
+		# Notifier egress (C38, N5): a plain comment (no-op for `nft -f`) on a
+		# host without the notifier, so this file loads identically to before.
+		# Wherever the notifier is installed, install.sh's "loopback
+		# firewall" step replaces this one line with pdash-notify's outbound
+		# rules from notifier-egress.nft.in (numeric uid substituted, so
+		# loading never depends on that user existing when nft would
+		# otherwise have to resolve a username).
+		# __PDASH_NOTIFIER_EGRESS__
+	}
+}

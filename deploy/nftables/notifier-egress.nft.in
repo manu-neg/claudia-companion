@@ -1,0 +1,16 @@
+# deploy/nftables/notifier-egress.nft.in — pdash-notify's egress rules (C38, ADR 0023).
+# install.sh drops these header lines, substitutes @NOTIFY_UID@ (numeric uid) and
+# splices the rest into preview-dashboard.nft at the __PDASH_NOTIFIER_EGRESS__ marker.
+# First match wins: local DNS, then private/tailnet refusals, then public 443 only.
+		# DNS only to the host's own resolver (systemd-resolved stub on 127.0.0.53).
+		meta skuid @NOTIFY_UID@ ip daddr 127.0.0.0/8 udp dport 53 ct state new accept
+		meta skuid @NOTIFY_UID@ ip daddr 127.0.0.0/8 tcp dport 53 ct state new accept
+		# Never the tailnet (owner devices, this host's own serve ports; S-B L2) ...
+		meta skuid @NOTIFY_UID@ ip daddr 100.64.0.0/10 ct state new reject
+		meta skuid @NOTIFY_UID@ ip6 daddr fd7a:115c:a1e0::/48 ct state new reject
+		# ... nor loopback, "this network", RFC1918, link-local or ULA: 443 means Telegram,
+		# not a local service a compromised notifier could pivot to.
+		meta skuid @NOTIFY_UID@ ip daddr { 0.0.0.0/8, 10.0.0.0/8, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16 } ct state new reject
+		meta skuid @NOTIFY_UID@ ip6 daddr { ::/127, fc00::/7, fe80::/10 } ct state new reject
+		meta skuid @NOTIFY_UID@ tcp dport 443 ct state new accept
+		meta skuid @NOTIFY_UID@ ct state new reject

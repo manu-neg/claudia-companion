@@ -1,0 +1,1701 @@
+/*
+  os/aero/chrome.css - Aero's signature look on top of the OS-neutral app.css: the sky desktop and
+  its scenery, frosted-glass windows and shell bar, gradient title bars with a glossy red
+  close button, glossy pill buttons, the pale Explorer selection, Aero icon colours and the background
+  set. Static states only (all motion is in fx/fx.css). Every rule is scoped to
+  :root[data-os="aero"] except the icon-art block (.aero-doc-*, .aero-c-*, .aero-ic-*), which stays
+  unscoped because <use> shadow trees never match an ancestor selector (see comment there); literal
+  colours live only in the private tokens.
+*/
+
+/* --- OS-private tokens: palette, glass, gloss, scenery and the shared motion set --- */
+
+:root[data-os="aero"] {
+  /* Motion set (docs/frontend-os.md#aero): every effect in fx/ uses only these. */
+  --aero-dur-press: 90ms;
+  --aero-dur-fast: 140ms;
+  --aero-dur-menu: 180ms;
+  --aero-dur-base: var(--motion-duration);
+  --aero-dur-slow: 300ms;
+  --aero-dur-glint: 300ms;
+  --aero-dur-splash: 700ms;
+  --aero-dur-screen: 600ms;
+  --aero-ambient-shimmer: 7s;
+  --aero-ambient-drift: 17s;
+  --aero-ambient-rise: 46s;
+  --aero-ambient-film: 9s;
+  --aero-ease-out: var(--motion-ease);
+  --aero-ease-in: cubic-bezier(0.4, 0, 0.9, 0.55);
+  --aero-ease-spring: cubic-bezier(0.25, 1.3, 0.45, 1);
+  --aero-ease-glide: cubic-bezier(0.45, 0.05, 0.55, 0.95);
+  --aero-open-scale: 0.94;
+  --aero-open-rise: 10px;
+  --aero-close-drop: 12px;
+  --aero-menu-drop: -6px;
+
+  /* Ink on glass */
+  --aero-white: #ffffff;
+  --aero-ink-shadow: 0 1px 0 rgb(255 255 255 / 0.7);
+  --aero-light-text-shadow: 0 -1px 0 rgb(0 40 70 / 0.45);
+  --aero-title-text-shadow: 0 1px 2px rgb(0 30 60 / 0.6);
+  --aero-focus-light: #ffffff;
+
+  /* Glass */
+  --aero-glass-bar: linear-gradient(
+    180deg,
+    rgb(255 255 255 / 0.9) 0,
+    rgb(255 255 255 / 0.76) 50%,
+    rgb(255 255 255 / 0.68) 51%,
+    rgb(255 255 255 / 0.8) 100%
+  );
+  --aero-glass-body: rgb(255 255 255 / 0.88);
+  --aero-glass-edge: rgb(255 255 255 / 0.95);
+  --aero-glass-blur: blur(12px) saturate(1.35);
+  --aero-glass-shadow: inset 0 1px 0 rgb(255 255 255 / 0.9), 0 14px 34px -14px rgb(10 70 110 / 0.55);
+  --aero-window-shadow: 0 0 0 1px rgb(20 80 130 / 0.28), 0 18px 40px -16px rgb(8 50 90 / 0.6);
+
+  /* Title bar */
+  --aero-title: linear-gradient(180deg, #3d8fcf 0, #2173b6 22%, #1c6bab 49%, #0f5b99 50%, #1968a8 100%);
+  --aero-title-edge: #0c4f86;
+  --aero-title-gloss: inset 0 1px 0 rgb(255 255 255 / 0.45);
+  --aero-button-gloss: inset 0 1px 0 rgb(255 255 255 / 0.5);
+  --aero-close: linear-gradient(180deg, #f5a08c 0, #e0604a 45%, #c7321f 50%, #b52a18 51%, #d9543f 100%);
+  --aero-close-edge: #7d1a0e;
+  --aero-close-glow: radial-gradient(90% 110% at 50% 100%, rgb(255 190 150 / 0.75), rgb(255 150 110 / 0) 75%),
+    linear-gradient(180deg, rgb(255 255 255 / 0.35), rgb(255 255 255 / 0) 50%);
+  --aero-close-halo: 0 0 10px 2px rgb(255 80 50 / 0.75);
+
+  /* Buttons */
+  --aero-button: linear-gradient(180deg, #ffffff 0, #eaf6fd 50%, #d6edfa 51%, #f2fafe 100%);
+  --aero-button-pressed: linear-gradient(180deg, #d4ebf9 0, #c3e3f7 50%, #b0d9f4 51%, #c9e6f8 100%);
+  --aero-button-edge: #8cbcd8;
+  --aero-button-shadow: 0 2px 4px -1px rgb(0 60 100 / 0.3);
+  --aero-button-glow: radial-gradient(120% 95% at 50% 100%, rgb(110 205 255 / 0.75), rgb(110 205 255 / 0) 75%),
+    linear-gradient(180deg, rgb(255 255 255 / 0.7), rgb(255 255 255 / 0) 55%);
+  --aero-button-glow-edge: inset 0 0 0 1px #3fa8e6, 0 0 0 0 transparent;
+  --aero-shine-band: linear-gradient(
+    100deg,
+    rgb(255 255 255 / 0) 25%,
+    rgb(255 255 255 / 0.85) 50%,
+    rgb(255 255 255 / 0) 75%
+  );
+  --aero-pill: linear-gradient(180deg, #7fd0f7 0, #1f78b8 22%, #1a70b0 49%, #0d62a0 50%, #1a74b4 100%);
+  --aero-pill-edge: #0a5e90;
+  --aero-pill-shadow: inset 0 1px 0 rgb(255 255 255 / 0.7), 0 3px 8px -2px rgb(0 70 120 / 0.5);
+  --aero-pill-glow: radial-gradient(120% 95% at 50% 100%, rgb(120 225 255 / 0.9), rgb(120 225 255 / 0) 75%),
+    linear-gradient(180deg, rgb(255 255 255 / 0.35), rgb(255 255 255 / 0) 50%);
+  --aero-danger: linear-gradient(180deg, #f28c78 0, #d4412f 20%, #c42b1c 49%, #ad2012 50%, #c33322 100%);
+  --aero-danger-edge: #8f1d10;
+  --aero-danger-quiet: linear-gradient(180deg, #ffffff 0, #fff0ee 50%, #ffe1dc 51%, #fff4f2 100%);
+  --aero-danger-quiet-edge: #e0968c;
+  --aero-go: linear-gradient(180deg, #a4ee6e 0, #56be2c 50%, #3fa41b 51%, #62c83a 100%);
+  --aero-go-edge: #2f8a12;
+
+  /* Selection, menus, headers, tips */
+  --aero-select: linear-gradient(180deg, #f3faff 0, #d8eefd 100%);
+  --aero-select-edge: #99cef5;
+  --aero-select-strong: linear-gradient(180deg, #e2f3ff 0, #c0e3fb 100%);
+  --aero-select-strong-edge: #5fb0e8;
+  --aero-select-glow: 0 0 10px rgb(80 170 240 / 0.35), inset 0 1px 0 rgb(255 255 255 / 0.9);
+  --aero-menu: linear-gradient(180deg, #ffffff 0, #f1f7fb 100%);
+  --aero-menu-edge: #a3c2d6;
+  --aero-header: linear-gradient(180deg, #ffffff 0, #f3f8fb 100%);
+  --aero-header-sorted: linear-gradient(180deg, #f2faff 0, #dff1fd 100%);
+  --aero-tip: linear-gradient(180deg, #ffffff 0, #e9f3fb 100%);
+  --aero-tip-top: #ffffff;
+  --aero-tip-bottom: #e9f3fb;
+  --aero-tip-edge: #8faec3;
+  --aero-tip-shadow: 0 4px 12px -4px rgb(8 45 80 / 0.4);
+  --aero-note-edge: #e6d49a;
+  --aero-panel: rgb(255 255 255 / 0.72);
+  --aero-stripe: rgb(214 237 250 / 0.55);
+  --aero-footer: #eef4f8;
+  --aero-inset-edge: #b6d3e6;
+
+  /* Badges and the orb */
+  --aero-badge-trash: linear-gradient(180deg, #e8604a 0, #cf3726 30%, #c42b1c 50%, #b52415 51%, #c73322 100%);
+  --aero-badge-feed: linear-gradient(180deg, #4aa6e0 0, #1f79bd 30%, #1a70b0 50%, #125f9c 51%, #1a6eae 100%);
+  --aero-badge-ring: 0 0 0 1.5px #ffffff, 0 2px 3px rgb(20 40 70 / 0.4);
+  --aero-orb: radial-gradient(circle at 50% 110%, #9cf06a 0, #4cb82a 45%, #1e7a12 100%);
+  --aero-orb-gloss: radial-gradient(ellipse 62% 42% at 50% 24%, rgb(255 255 255 / 0.95), rgb(255 255 255 / 0.15) 90%, rgb(255 255 255 / 0) 100%);
+  --aero-orb-ring: 0 2px 6px rgb(20 80 20 / 0.45), 0 0 0 2px rgb(255 255 255 / 0.85);
+  --aero-mini-wallpaper: linear-gradient(180deg, #7fd3fa 0 58%, #56be2c 58% 100%);
+
+  /* Icon art (os/aero/shell.js sprite shapes) */
+  --aero-ic-white: #ffffff;
+  --aero-ic-shine: rgb(255 255 255 / 0.5);
+  /* Document icons (Vista/7 pages): page, edges, shading, and the colours drawn on them. */
+  --aero-doc-page: #fdfeff;
+  --aero-doc-page-mid: #eef3f8;
+  --aero-doc-page-back: #e0e8f0;
+  --aero-doc-edge: #6d8499;
+  --aero-doc-shadow: rgb(8 36 66 / 0.2);
+  --aero-doc-shade: rgb(96 132 170 / 0.1);
+  --aero-doc-gleam: rgb(255 255 255 / 0.95);
+  --aero-doc-fold: #dfe8f1;
+  --aero-doc-crease: rgb(8 36 66 / 0.14);
+  --aero-c-blue: #2268d0;
+  --aero-c-sky: #8ccdf3;
+  --aero-c-skytop: #3e93dc;
+  --aero-c-navy: #1c4478;
+  --aero-c-teal: #0b8a7c;
+  --aero-c-green: #2f9b35;
+  --aero-c-mint: #cdeec7;
+  --aero-c-greenink: #1f7a28;
+  --aero-c-red: #d23a2b;
+  --aero-c-pink: #fbd3cc;
+  --aero-c-redink: #b12a1e;
+  --aero-c-orange: #ec7a1a;
+  --aero-c-sun: #ffc62e;
+  --aero-c-hill: #6fb84a;
+  --aero-c-grass: #3f9a2e;
+  --aero-c-purple: #7636c4;
+  --aero-c-film: #2c3246;
+  --aero-c-slate: #66798d;
+  --aero-c-steel: #8fa2b4;
+  --aero-c-mist: #dae3ec;
+  --aero-c-paleblue: #c4dbf1;
+  --aero-c-white: #ffffff;
+  --aero-c-shine: rgb(255 255 255 / 0.45);
+  --aero-ic-bin: #cfe4f0;
+  --aero-ic-bin-edge: #6f93a8;
+  --aero-ic-bin-rib: #93b4c8;
+  --aero-ic-paper: #fbfbf4;
+  --aero-ic-paper-edge: #a8a89a;
+  --aero-ic-warn: #f5c518;
+  --aero-ic-warn-edge: #b88a0a;
+  --aero-ic-warn-mark: #3a2a00;
+  --aero-ic-orb: #3fae22;
+  --aero-ic-pin: #d8402c;
+  --aero-ic-needle: #7d8b96;
+  --aero-ic-glint: rgb(255 255 255 / 0.85);
+  --aero-ic-chevron: #3b6580;
+  --aero-ic-arrow: #0a6fa8;
+  --aero-ic-grip: #8faec3;
+
+  /* Scenery (re-tinted per background below) */
+  --aero-sun: radial-gradient(circle, rgb(255 255 255 / 0.95) 0, rgb(255 255 255 / 0.5) 18%, rgb(255 255 255 / 0) 60%);
+  --aero-ray: linear-gradient(180deg, rgb(255 255 255 / 0.4), rgb(255 255 255 / 0));
+  --aero-bubble: radial-gradient(
+    circle at 32% 28%,
+    rgb(255 255 255 / 0.95) 0 8%,
+    rgb(255 255 255 / 0.25) 14%,
+    rgb(255 255 255 / 0.06) 55%,
+    rgb(255 255 255 / 0.55) 72%,
+    rgb(255 255 255 / 0) 74%
+  );
+  --aero-bubble-edge: rgb(255 255 255 / 0.5);
+  --aero-hill-back: linear-gradient(180deg, #7ed24a 0, #2e8014 60%);
+  --aero-hill-front: linear-gradient(180deg, #9be36a 0, #3c9a1f 60%);
+  --aero-hill-sheen: inset 0 12px 22px -8px rgb(255 255 255 / 0.6);
+  --aero-bg-sky: linear-gradient(180deg, #2e9bdb 0, #6ec6f0 42%, #bde8fa 78%, #e8f8ff 100%);
+  --aero-bg-aurora: radial-gradient(120% 70% at 20% 110%, #1c8f6a 0, rgb(28 143 106 / 0) 60%),
+    linear-gradient(170deg, #0b3f5c 0, #0a5a5e 45%, #0d4a7a 100%);
+  --aero-bg-ocean: linear-gradient(180deg, #7fe0f2 0, #22a6cf 22%, #0f6fa8 60%, #0a3d6e 100%);
+  --aero-bg-dusk: linear-gradient(180deg, #2a3f7a 0, #6a4f9a 35%, #d4708a 65%, #f7b36c 100%);
+  --aero-ribbon-cyan: rgb(90 230 255 / 0.55);
+  --aero-ribbon-green: rgb(120 255 170 / 0.6);
+  --aero-bg-plain: linear-gradient(180deg, #1a6fb3 0, #3f93d0 45%, #8ccdf1 100%);
+}
+
+/* --- desktop: the sky, fixed behind scrolling windows --- */
+
+:root[data-os="aero"] body {
+  background-attachment: fixed;
+}
+
+/* With Feed/Trash moved into the shell bar (shell.js) the window area takes the full width. */
+:root[data-os="aero"] .desktop:not(:has(> .desk-icons)) {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: none;
+}
+
+:root[data-os="aero"] .desktop:not(:has(> .desk-icons)) > .main {
+  grid-area: auto;
+}
+
+/* Scenery (shell.js, aria-hidden): fixed under everything, never catches input. */
+:root[data-os="aero"] .aero-scenery {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+:root[data-os="aero"] .aero-sun,
+:root[data-os="aero"] .aero-ray,
+:root[data-os="aero"] .aero-bubble,
+:root[data-os="aero"] .aero-hill {
+  position: absolute;
+  display: block;
+}
+
+:root[data-os="aero"] .aero-sun {
+  top: -160px;
+  right: 8%;
+  width: 520px;
+  height: 520px;
+  border-radius: 50%;
+  background: var(--aero-sun);
+}
+
+:root[data-os="aero"] .aero-ray {
+  top: -60px;
+  height: 120vh;
+  transform-origin: top center;
+  transform: rotate(var(--aero-ray-angle));
+  background: var(--aero-ray);
+}
+
+:root[data-os="aero"] .aero-ray-1 {
+  --aero-ray-angle: 28deg;
+  right: 22%;
+  width: 60px;
+}
+
+:root[data-os="aero"] .aero-ray-2 {
+  --aero-ray-angle: 38deg;
+  right: 31%;
+  width: 26px;
+}
+
+:root[data-os="aero"] .aero-ray-3 {
+  --aero-ray-angle: 18deg;
+  right: 15%;
+  width: 100px;
+  opacity: 0.6;
+}
+
+:root[data-os="aero"] .aero-bubble {
+  border-radius: 50%;
+  background: var(--aero-bubble);
+  border: 1px solid var(--aero-bubble-edge);
+}
+
+:root[data-os="aero"] .aero-bubble-1 {
+  left: 2%;
+  top: 34%;
+  width: 120px;
+  height: 120px;
+}
+
+:root[data-os="aero"] .aero-bubble-2 {
+  left: 12%;
+  top: 92%;
+  width: 34px;
+  height: 34px;
+}
+
+:root[data-os="aero"] .aero-bubble-3 {
+  right: 4%;
+  top: 58%;
+  width: 80px;
+  height: 80px;
+}
+
+:root[data-os="aero"] .aero-bubble-4 {
+  right: 18%;
+  top: 96%;
+  width: 22px;
+  height: 22px;
+}
+
+:root[data-os="aero"] .aero-bubble-5 {
+  left: 40%;
+  top: 78%;
+  width: 150px;
+  height: 150px;
+  opacity: 0.75;
+}
+
+:root[data-os="aero"] .aero-bubble-6 {
+  left: 34%;
+  top: 14%;
+  width: 40px;
+  height: 40px;
+}
+
+:root[data-os="aero"] .aero-hill {
+  border-radius: 50%;
+  box-shadow: var(--aero-hill-sheen);
+}
+
+/* Fixed widths, so a phone sees the gentle crest of a wide hill rather than a round blob. */
+:root[data-os="aero"] .aero-hill-back {
+  left: calc(50% - 180px);
+  width: 1700px;
+  bottom: -330px;
+  height: 600px;
+  background: var(--aero-hill-back);
+}
+
+:root[data-os="aero"] .aero-hill-front {
+  left: calc(50% - 1100px);
+  width: 1560px;
+  bottom: -380px;
+  height: 580px;
+  background: var(--aero-hill-front);
+}
+
+/* --- shell bar: a floating glass taskbar (orb, Feed/Trash pills, pickers, clock) --- */
+
+:root[data-os="aero"] .shell-bar {
+  align-items: center;
+  gap: var(--space-1);
+  min-height: calc(var(--topbar-height) + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) var(--space-2) 0;
+  background: none;
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+  text-shadow: var(--aero-ink-shadow);
+}
+
+/* The glass is a layer behind the bar, so the bar itself never becomes a backdrop root for
+   its drop-downs. */
+:root[data-os="aero"] .shell-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--aero-glass-bar);
+  border-bottom: var(--border-width) solid var(--aero-glass-edge);
+  box-shadow: var(--aero-glass-shadow);
+  -webkit-backdrop-filter: var(--aero-glass-blur);
+  backdrop-filter: var(--aero-glass-blur);
+}
+
+/* The orb (the sprite's 16px app icon gives way to it) and the app name. */
+:root[data-os="aero"] .shell-app {
+  position: relative;
+  gap: var(--space-2);
+  padding: 0 var(--space-1);
+  font-size: 0;
+}
+
+:root[data-os="aero"] .shell-app .icon-sm {
+  display: none;
+}
+
+:root[data-os="aero"] .shell-app::before {
+  content: "";
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--aero-orb-gloss), var(--aero-orb);
+  box-shadow: var(--aero-orb-ring);
+}
+
+:root[data-os="aero"] .shell-app::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--space-1) + 14px);
+  top: 50%;
+  width: 12px;
+  height: 14px;
+  margin-top: -7px;
+  background: var(--aero-white);
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+
+/* Feed / Trash as pills in the bar (moved there by shell.js). */
+:root[data-os="aero"] .shell-bar .desk-icons {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+:root[data-os="aero"] .shell-bar .desk-icon {
+  position: relative;
+  isolation: isolate;
+  flex-direction: row;
+  width: auto;
+  min-height: var(--tap-target);
+  padding: 0 var(--space-3);
+  gap: var(--space-2);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-pill);
+  color: var(--color-text);
+}
+
+:root[data-os="aero"] .shell-bar .desk-icon .icon-lg {
+  display: none;
+}
+
+:root[data-os="aero"] .shell-bar .desk-icon-label {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-strong);
+}
+
+/* "5 items" stays for screen readers; the badge shows the number. */
+:root[data-os="aero"] .shell-bar .desk-icon-label small {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Hover glass (fx.css fades it). */
+:root[data-os="aero"] .shell-bar .desk-icon::before,
+:root[data-os="aero"] .shell-menu-trigger::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--aero-button-glow);
+  box-shadow: var(--aero-button-glow-edge);
+  opacity: 0;
+}
+
+:root[data-os="aero"] .shell-bar .desk-icon:hover::before,
+:root[data-os="aero"] .shell-menu-trigger:hover::before,
+:root[data-os="aero"] .shell-menu-trigger[aria-expanded="true"]::before {
+  opacity: 1;
+}
+
+:root[data-os="aero"] .shell-bar .desk-icon[aria-current="page"] {
+  background: var(--aero-pill);
+  border-color: var(--aero-pill-edge);
+  box-shadow: var(--aero-pill-shadow);
+  color: var(--aero-white);
+  text-shadow: var(--aero-light-text-shadow);
+}
+
+:root[data-os="aero"] .shell-bar .desk-icon[aria-current="page"]::before {
+  background: var(--aero-pill-glow);
+  box-shadow: none;
+}
+
+:root[data-os="aero"] .shell-bar .desk-icon:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* Count badge: the number from data-count-value (desktop.js); alt text "" so it isn't read twice. */
+:root[data-os="aero"] .shell-bar .desk-icon[data-count-value]::after {
+  content: attr(data-count-value) / "";
+  min-width: 21px;
+  height: 21px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--aero-badge-feed);
+  box-shadow: var(--aero-badge-ring);
+  color: var(--aero-white);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-strong);
+  line-height: 21px;
+  text-align: center;
+  text-shadow: none;
+}
+
+:root[data-os="aero"] .shell-bar .desk-icon[data-nav="trash"]::after {
+  background: var(--aero-badge-trash);
+}
+
+:root[data-os="aero"] .shell-bar .desk-icon[data-count-value="0"]::after {
+  display: none;
+}
+
+/* Pickers: Background pushes itself and OS to the right edge; glassy pill triggers. */
+:root[data-os="aero"] [data-shellbar] [data-slot="background"] {
+  margin-left: auto;
+}
+
+:root[data-os="aero"] .shell-menu-anchor {
+  align-items: center;
+}
+
+:root[data-os="aero"] .shell-menu-trigger {
+  position: relative;
+  isolation: isolate;
+  min-height: var(--tap-target);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+
+:root[data-os="aero"] .shell-menu-trigger:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: 0;
+}
+
+:root[data-os="aero"] .shell-clock {
+  min-height: var(--tap-target);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  margin-left: 0;
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Drop-downs: opaque (Vista menus are not glass), soft shadow, rounded pale-blue hover. */
+:root[data-os="aero"] .shell-menu {
+  top: calc(100% - var(--space-1));
+  min-width: 10rem;
+  padding: var(--space-1);
+  border: var(--border-width) solid var(--aero-menu-edge);
+  border-radius: var(--radius-sm);
+  background: var(--aero-menu);
+  box-shadow: var(--shadow-overlay);
+  font-size: var(--font-size-base);
+  text-shadow: none;
+}
+
+:root[data-os="aero"] .shell-menu-option {
+  border: var(--border-width) solid transparent;
+  border-radius: 5px;
+  font-weight: var(--font-weight-regular);
+}
+
+:root[data-os="aero"] .shell-menu-option:hover,
+:root[data-os="aero"] .shell-menu-option:focus-visible {
+  background: var(--aero-select);
+  border-color: var(--aero-select-edge);
+  color: var(--color-text);
+}
+
+:root[data-os="aero"] .shell-menu-option[aria-checked="true"] {
+  font-weight: var(--font-weight-strong);
+}
+
+/* --- windows: frosted glass, gradient title bar, red close button on the right --- */
+
+:root[data-os="aero"] .window {
+  position: relative;
+  z-index: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-lg);
+}
+
+/* The glass is a layer behind the window's content: a backdrop-filter on .window itself would
+   make it the containing block of the full-screen preview (position: fixed). */
+:root[data-os="aero"] .window::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border: var(--border-width) solid var(--aero-glass-edge);
+  border-radius: inherit;
+  background: var(--aero-glass-body);
+  box-shadow: var(--aero-window-shadow);
+  -webkit-backdrop-filter: var(--aero-glass-blur);
+  backdrop-filter: var(--aero-glass-blur);
+}
+
+:root[data-os="aero"] .titlebar {
+  gap: var(--space-2);
+  min-height: var(--titlebar-height);
+  padding: 0 var(--space-1) 0 var(--space-4);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  border-bottom: var(--border-width) solid var(--aero-title-edge);
+  background: var(--aero-title);
+  box-shadow: var(--aero-title-gloss);
+  color: var(--aero-white);
+  text-shadow: var(--aero-title-text-shadow);
+}
+
+:root[data-os="aero"] .titlebar-title {
+  flex: 1;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-medium);
+}
+
+/* The real close control (a link back): 44px tall hit area, a wide red glossy button. */
+:root[data-os="aero"] .titlebar-close {
+  order: 3;
+  position: relative;
+  isolation: isolate;
+  flex: none;
+  width: 50px;
+  min-width: 50px;
+  margin: -4px 0;
+  color: var(--aero-white);
+}
+
+:root[data-os="aero"] .titlebar-close::before {
+  position: absolute;
+  inset: 12px 3px;
+  display: grid;
+  place-items: center;
+  border: var(--border-width) solid var(--aero-close-edge);
+  border-radius: 4px;
+  background: var(--aero-close);
+  box-shadow: var(--aero-button-gloss);
+  font-size: 1.25rem;
+  font-weight: var(--font-weight-strong);
+  line-height: 1;
+}
+
+/* The close button lights up: a warm highlight over it and a red halo around it (fx.css
+   fades it in and out). */
+:root[data-os="aero"] .titlebar-close::after {
+  content: "";
+  position: absolute;
+  inset: 12px 3px;
+  border-radius: 4px;
+  background: var(--aero-close-glow);
+  box-shadow: var(--aero-close-halo);
+  opacity: 0;
+  pointer-events: none;
+}
+
+:root[data-os="aero"] .titlebar-close:hover::after,
+:root[data-os="aero"] .titlebar-close:focus-visible::after {
+  opacity: 1;
+}
+
+:root[data-os="aero"] .titlebar-close:active::before {
+  box-shadow: var(--bevel-pressed);
+}
+
+:root[data-os="aero"] .titlebar-close:focus-visible {
+  outline: var(--focus-ring-width) solid var(--aero-focus-light);
+  outline-offset: -8px;
+}
+
+:root[data-os="aero"] .window-body {
+  padding: var(--space-3);
+}
+
+:root[data-os="aero"] .window-alert {
+  padding: var(--space-5);
+}
+
+/* --- lists: Explorer details view --- */
+
+:root[data-os="aero"] .finder-header {
+  border-bottom: 0;
+}
+
+:root[data-os="aero"] .inset {
+  overflow: hidden;
+  border: var(--border-width) solid var(--aero-inset-edge);
+  border-radius: 10px;
+  box-shadow: var(--bevel-sunken);
+}
+
+:root[data-os="aero"] .list-head {
+  background: var(--aero-header);
+  border-bottom: var(--border-width) solid var(--color-border);
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-medium);
+}
+
+:root[data-os="aero"] .list-head .cell {
+  border-right: var(--border-width) solid var(--color-rule);
+}
+
+:root[data-os="aero"] .list-head .cell:last-child {
+  border-right: 0;
+}
+
+:root[data-os="aero"] .list-head .is-sorted {
+  background: var(--aero-header-sorted);
+}
+
+:root[data-os="aero"] .row {
+  border-bottom: 0;
+}
+
+:root[data-os="aero"] .row-link {
+  position: relative;
+  isolation: isolate;
+}
+
+/* The selection: a pale-blue glass capsule with a soft glow (fx.css fades it in and out). */
+:root[data-os="aero"] .row-link::before {
+  content: "";
+  position: absolute;
+  inset: 1px 0 1px 3px;
+  z-index: -1;
+  border: var(--border-width) solid var(--aero-select-edge);
+  border-radius: 6px;
+  background: var(--aero-select);
+  box-shadow: var(--aero-select-glow);
+  opacity: 0;
+}
+
+:root[data-os="aero"] .row-link:hover,
+:root[data-os="aero"] .row-link:focus-visible,
+:root[data-os="aero"] .row-link:active {
+  background: transparent;
+  box-shadow: none;
+}
+
+:root[data-os="aero"] .row-link:hover::before,
+:root[data-os="aero"] .row-link:focus-visible::before,
+:root[data-os="aero"] .row-link:active::before {
+  opacity: 1;
+}
+
+:root[data-os="aero"] .row-link:focus-visible::before,
+:root[data-os="aero"] .row-link:active::before {
+  border-color: var(--aero-select-strong-edge);
+  background: var(--aero-select-strong);
+}
+
+:root[data-os="aero"] .row-link .cell-date {
+  background: transparent;
+}
+
+:root[data-os="aero"] .row-more {
+  border-radius: var(--radius-pill);
+}
+
+:root[data-os="aero"] .row-more:hover,
+:root[data-os="aero"] .row-more:focus-visible {
+  background: var(--aero-select);
+  box-shadow: inset 0 0 0 1px var(--aero-select-edge);
+}
+
+/* Glossy Aero icon art (shapes from shell.js). */
+:root[data-os="aero"] .icon,
+:root[data-os="aero"] .icon-sm,
+:root[data-os="aero"] .icon-lg,
+:root[data-os="aero"] .pin,
+:root[data-os="aero"] .sort-dir,
+:root[data-os="aero"] .popup-arrow,
+:root[data-os="aero"] .grow {
+  shape-rendering: geometricPrecision;
+}
+
+/* Aero icon art (shell.js DOC_ART / ART): shapes take their colour from one aero-c-* class.
+   These rules MUST stay unscoped (no :root[data-os] prefix, no ancestor): <use> clones the
+   shapes into a shadow tree where an outside ancestor never matches, so a scoped rule leaves
+   them black. Safe because the classes exist only after Aero's sprite swap and the --aero-*
+   vars they read inherit into the shadow tree. tests/unit/test_aero_icon_css.py enforces it. */
+.aero-doc-shadow {
+  fill: var(--aero-doc-shadow);
+}
+
+.aero-doc-page {
+  fill: var(--aero-doc-page);
+}
+
+.aero-doc-page-mid {
+  fill: var(--aero-doc-page-mid);
+}
+
+.aero-doc-page-back {
+  fill: var(--aero-doc-page-back);
+}
+
+.aero-doc-shade {
+  fill: var(--aero-doc-shade);
+}
+
+.aero-doc-gleam {
+  fill: none;
+  stroke: var(--aero-doc-gleam);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+
+.aero-doc-fold {
+  fill: var(--aero-doc-fold);
+}
+
+.aero-doc-crease {
+  fill: var(--aero-doc-crease);
+}
+
+/* 1 device pixel at 16, 32 and 48px alike, like Vista's hairline page edges. */
+.aero-doc-edge {
+  fill: none;
+  stroke: var(--aero-doc-edge);
+  stroke-width: 1px;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.aero-doc-frame {
+  fill: none;
+  stroke: var(--aero-c-slate);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+
+.aero-doc-node {
+  fill: var(--aero-c-white);
+  stroke: var(--aero-c-blue);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+
+.aero-doc-box {
+  fill: var(--aero-c-white);
+  stroke: var(--aero-c-slate);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+
+.aero-doc-trough {
+  fill: var(--aero-c-mist);
+  stroke: var(--aero-c-steel);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+
+.aero-doc-f {
+  fill: currentcolor;
+}
+
+.aero-doc-s {
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.aero-c-blue {
+  color: var(--aero-c-blue);
+}
+
+.aero-c-sky {
+  color: var(--aero-c-sky);
+}
+
+.aero-c-skytop {
+  color: var(--aero-c-skytop);
+}
+
+.aero-c-navy {
+  color: var(--aero-c-navy);
+}
+
+.aero-c-teal {
+  color: var(--aero-c-teal);
+}
+
+.aero-c-green {
+  color: var(--aero-c-green);
+}
+
+.aero-c-mint {
+  color: var(--aero-c-mint);
+}
+
+.aero-c-greenink {
+  color: var(--aero-c-greenink);
+}
+
+.aero-c-red {
+  color: var(--aero-c-red);
+}
+
+.aero-c-pink {
+  color: var(--aero-c-pink);
+}
+
+.aero-c-redink {
+  color: var(--aero-c-redink);
+}
+
+.aero-c-orange {
+  color: var(--aero-c-orange);
+}
+
+.aero-c-sun {
+  color: var(--aero-c-sun);
+}
+
+.aero-c-hill {
+  color: var(--aero-c-hill);
+}
+
+.aero-c-grass {
+  color: var(--aero-c-grass);
+}
+
+.aero-c-purple {
+  color: var(--aero-c-purple);
+}
+
+.aero-c-film {
+  color: var(--aero-c-film);
+}
+
+.aero-c-slate {
+  color: var(--aero-c-slate);
+}
+
+.aero-c-steel {
+  color: var(--aero-c-steel);
+}
+
+.aero-c-mist {
+  color: var(--aero-c-mist);
+}
+
+.aero-c-paleblue {
+  color: var(--aero-c-paleblue);
+}
+
+.aero-c-white {
+  color: var(--aero-c-white);
+}
+
+.aero-c-shine {
+  color: var(--aero-c-shine);
+}
+
+.aero-ic-shine {
+  fill: var(--aero-ic-shine);
+}
+
+.aero-ic-glyph {
+  fill: var(--aero-ic-white);
+}
+
+.aero-ic-bin {
+  fill: var(--aero-ic-bin);
+  stroke: var(--aero-ic-bin-edge);
+}
+
+.aero-ic-bin-rim {
+  fill: var(--aero-ic-bin);
+  stroke: var(--aero-ic-bin-edge);
+}
+
+.aero-ic-bin-rib {
+  fill: none;
+  stroke: var(--aero-ic-bin-rib);
+  stroke-width: 1.2;
+}
+
+.aero-ic-paper {
+  fill: var(--aero-ic-paper);
+  stroke: var(--aero-ic-paper-edge);
+  stroke-linejoin: round;
+}
+
+.aero-ic-warn {
+  fill: var(--aero-ic-warn);
+  stroke: var(--aero-ic-warn-edge);
+}
+
+.aero-ic-warn-mark {
+  stroke: var(--aero-ic-warn-mark);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.aero-ic-warn-dot {
+  fill: var(--aero-ic-warn-mark);
+}
+
+.aero-ic-orb {
+  fill: var(--aero-ic-orb);
+}
+
+.aero-ic-pin {
+  fill: var(--aero-ic-pin);
+}
+
+.aero-ic-needle {
+  fill: var(--aero-ic-needle);
+}
+
+.aero-ic-glint {
+  fill: var(--aero-ic-glint);
+}
+
+.aero-ic-chevron {
+  fill: none;
+  stroke: var(--aero-ic-chevron);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.aero-ic-arrow {
+  fill: var(--aero-ic-arrow);
+}
+
+.aero-ic-grip {
+  fill: var(--aero-ic-grip);
+}
+
+/* --- controls: glossy pills --- */
+
+:root[data-os="aero"] .button {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-color: var(--aero-button-edge);
+  border-radius: var(--radius-pill);
+  background: var(--aero-button);
+  box-shadow: var(--aero-button-shadow);
+  font-weight: var(--font-weight-medium);
+}
+
+/* Hover glow (fx.css fades it; ::after is fx.css's shine sweep). */
+:root[data-os="aero"] .button::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--aero-button-glow);
+  box-shadow: var(--aero-button-glow-edge);
+  opacity: 0;
+}
+
+:root[data-os="aero"] .button:hover::before,
+:root[data-os="aero"] .button:focus-visible::before {
+  opacity: 1;
+}
+
+:root[data-os="aero"] .button:active {
+  background: var(--aero-button-pressed);
+  box-shadow: var(--bevel-pressed);
+}
+
+:root[data-os="aero"] .button-primary {
+  border-color: var(--aero-pill-edge);
+  background: var(--aero-pill);
+  box-shadow: var(--aero-pill-shadow);
+  color: var(--aero-white);
+  text-shadow: var(--aero-light-text-shadow);
+}
+
+:root[data-os="aero"] .button-primary::before {
+  background: var(--aero-pill-glow);
+  box-shadow: none;
+}
+
+:root[data-os="aero"] .button-danger {
+  border-color: var(--aero-danger-edge);
+  background: var(--aero-danger);
+  color: var(--color-danger-contrast);
+}
+
+:root[data-os="aero"] .button-danger-quiet {
+  border-color: var(--aero-danger-quiet-edge);
+  background: var(--aero-danger-quiet);
+  color: var(--color-danger-hover);
+}
+
+:root[data-os="aero"] .button-primary:active,
+:root[data-os="aero"] .button-danger:active {
+  box-shadow: var(--bevel-pressed);
+}
+
+:root[data-os="aero"] .button-primary:focus-visible,
+:root[data-os="aero"] .button-danger:focus-visible {
+  outline-color: var(--color-focus);
+}
+
+:root[data-os="aero"] .select {
+  border-color: var(--aero-button-edge);
+  border-radius: var(--radius-pill);
+  background: var(--aero-button);
+  box-shadow: var(--aero-button-shadow);
+  font-weight: var(--font-weight-medium);
+}
+
+:root[data-os="aero"] .popup-arrow {
+  right: var(--space-3);
+}
+
+:root[data-os="aero"] .link-button {
+  color: var(--color-focus);
+}
+
+:root[data-os="aero"] .file-action {
+  margin-left: var(--space-1);
+  padding: 0 var(--space-3);
+  border: var(--border-width) solid var(--aero-button-edge);
+  border-radius: var(--radius-pill);
+  background: var(--aero-button);
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+}
+
+:root[data-os="aero"] .file-action:hover {
+  border-color: var(--aero-select-strong-edge);
+}
+
+:root[data-os="aero"] .file-action[aria-pressed="true"] {
+  background: var(--aero-button-pressed);
+  box-shadow: var(--bevel-pressed);
+}
+
+:root[data-os="aero"] .stage-close {
+  border-color: var(--aero-button-edge);
+  border-radius: var(--radius-pill);
+  background: var(--aero-button);
+  box-shadow: var(--shadow-overlay);
+  font-weight: var(--font-weight-medium);
+}
+
+/* --- Get Info window --- */
+
+:root[data-os="aero"] .info-top {
+  border-bottom: var(--border-width) solid var(--color-rule);
+}
+
+:root[data-os="aero"] .item-title {
+  font-weight: var(--font-weight-strong);
+}
+
+:root[data-os="aero"] .screen,
+:root[data-os="aero"] .item-preview > .preview-empty {
+  overflow: hidden;
+  border: var(--border-width) solid var(--aero-white);
+  border-radius: 10px;
+  box-shadow: var(--shadow-raised);
+}
+
+:root[data-os="aero"] .field dt {
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-medium);
+}
+
+:root[data-os="aero"] .label-dot {
+  border-color: var(--aero-go-edge);
+  border-radius: 50%;
+  background: var(--aero-go);
+}
+
+/* Group box: a rounded glass panel with its title above (the prototype's "Files"). */
+:root[data-os="aero"] .group {
+  padding: var(--space-2);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: 12px;
+  background: var(--aero-panel);
+}
+
+:root[data-os="aero"] .group-title {
+  position: static;
+  padding: 0 var(--space-1) var(--space-1);
+  background: none;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-strong);
+}
+
+:root[data-os="aero"] .file {
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 0;
+  border-radius: 8px;
+}
+
+:root[data-os="aero"] .file:nth-child(odd) {
+  background: var(--aero-stripe);
+}
+
+:root[data-os="aero"] .file.is-selected {
+  background: var(--aero-select);
+  box-shadow: inset 0 0 0 1px var(--aero-select-edge);
+}
+
+/* --- notes, balloons, toast --- */
+
+:root[data-os="aero"] .balloon,
+:root[data-os="aero"] .version-notice {
+  border-color: var(--aero-note-edge);
+  border-radius: 10px;
+  box-shadow: var(--aero-tip-shadow);
+}
+
+:root[data-os="aero"] .balloon-help {
+  padding: var(--space-1) var(--space-2);
+  border-color: var(--aero-tip-edge);
+  border-radius: 6px;
+  background: var(--aero-tip);
+  box-shadow: var(--aero-tip-shadow);
+  font-family: var(--font-body);
+}
+
+:root[data-os="aero"] .balloon-help::before {
+  content: "";
+  position: absolute;
+  left: var(--space-3);
+  width: 9px;
+  height: 9px;
+  border: var(--border-width) solid var(--aero-tip-edge);
+  transform: rotate(45deg);
+}
+
+:root[data-os="aero"] .balloon-help[data-tail="top"]::before {
+  top: -5px;
+  border-right: 0;
+  border-bottom: 0;
+  background: var(--aero-tip-top);
+}
+
+:root[data-os="aero"] .balloon-help[data-tail="bottom"]::before {
+  bottom: -5px;
+  border-left: 0;
+  border-top: 0;
+  background: var(--aero-tip-bottom);
+}
+
+:root[data-os="aero"] .toast {
+  padding: var(--space-2) var(--space-5);
+  border-color: var(--aero-tip-edge);
+  border-radius: var(--radius-lg);
+  background: var(--aero-tip);
+  box-shadow: var(--shadow-overlay);
+  font-weight: var(--font-weight-medium);
+}
+
+:root[data-os="aero"] .loading {
+  border-radius: var(--radius-pill);
+  padding: var(--space-2) var(--space-4);
+  box-shadow: var(--shadow-raised);
+}
+
+/* --- context menu and the confirm dialog (a Vista task dialog: white, grey footer) --- */
+
+:root[data-os="aero"] .ctx-menu {
+  padding: var(--space-1);
+  border-color: var(--aero-menu-edge);
+  border-radius: var(--radius-sm);
+  background: var(--aero-menu);
+  box-shadow: var(--shadow-overlay);
+}
+
+:root[data-os="aero"] .ctx-menu-item {
+  border: var(--border-width) solid transparent;
+  border-radius: 5px;
+}
+
+:root[data-os="aero"] .ctx-menu-item:not([aria-disabled="true"]):hover,
+:root[data-os="aero"] .ctx-menu-item:not([aria-disabled="true"]):focus-visible {
+  border-color: var(--aero-select-edge);
+  background: var(--aero-select);
+  color: var(--color-text);
+}
+
+:root[data-os="aero"] .ctx-menu-item.is-danger:not([aria-disabled="true"]):hover,
+:root[data-os="aero"] .ctx-menu-item.is-danger:not([aria-disabled="true"]):focus-visible {
+  color: var(--color-danger-hover);
+}
+
+:root[data-os="aero"] .ctx-menu-sep {
+  border-top-color: var(--color-rule);
+}
+
+:root[data-os="aero"] .dialog {
+  overflow: hidden;
+  padding: var(--space-5) var(--space-5) 0;
+  border-color: var(--aero-menu-edge);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-overlay);
+}
+
+:root[data-os="aero"] .dialog > .buttons {
+  margin: 0 calc(-1 * var(--space-5));
+  padding: var(--space-3) var(--space-5);
+  border-top: var(--border-width) solid var(--color-rule);
+  background: var(--aero-footer);
+}
+
+/* --- the background set (os/aero/backgrounds.js): gradients on body, scenery re-tinted --- */
+
+:root[data-os="aero"] body[data-background="sky"] {
+  background-color: var(--color-bg);
+  background-image: var(--aero-bg-sky);
+}
+
+:root[data-os="aero"] body[data-background="aurora"] {
+  --aero-ray: linear-gradient(180deg, rgb(120 255 200 / 0.4), rgb(80 220 255 / 0.12) 60%, rgb(80 220 255 / 0));
+  --aero-sun: radial-gradient(circle, rgb(140 255 210 / 0.45) 0, rgb(140 255 210 / 0) 62%);
+  background-color: var(--color-media-bg);
+  background-image: var(--aero-bg-aurora);
+}
+
+:root[data-os="aero"] body[data-background="ocean"] {
+  --aero-ray: linear-gradient(180deg, rgb(255 255 255 / 0.45), rgb(255 255 255 / 0) 85%);
+  --aero-sun: radial-gradient(ellipse 60% 40%, rgb(255 255 255 / 0.7) 0, rgb(255 255 255 / 0) 70%);
+  background-color: var(--color-focus);
+  background-image: var(--aero-bg-ocean);
+}
+
+:root[data-os="aero"] body[data-background="dusk"] {
+  --aero-ray: linear-gradient(180deg, rgb(255 214 150 / 0.4), rgb(255 214 150 / 0));
+  --aero-sun: radial-gradient(circle, rgb(255 226 170 / 0.95) 0, rgb(255 180 110 / 0.5) 20%, rgb(255 180 110 / 0) 60%);
+  --aero-hill-back: linear-gradient(180deg, #4a3f78 0, #241f45 60%);
+  --aero-hill-front: linear-gradient(180deg, #3a3466 0, #16142e 60%);
+  --aero-hill-sheen: inset 0 10px 20px -8px rgb(255 190 140 / 0.45);
+  --aero-bubble-edge: rgb(255 220 190 / 0.35);
+  background-color: var(--color-text);
+  background-image: var(--aero-bg-dusk);
+}
+
+:root[data-os="aero"] body[data-background="plain"] {
+  background-color: var(--color-focus);
+  background-image: var(--aero-bg-plain);
+}
+
+:root[data-os="aero"] body[data-background="aurora"] .aero-bubble,
+:root[data-os="aero"] body[data-background="ocean"] .aero-hill,
+:root[data-os="aero"] body[data-background="dusk"] .aero-bubble,
+:root[data-os="aero"] body[data-background="plain"] .aero-scenery {
+  display: none;
+}
+
+/* Aurora: the rays become wide, soft curtains and the hills sweeping arcs of light. */
+:root[data-os="aero"] body[data-background="aurora"] .aero-ray {
+  width: 180px;
+  filter: blur(18px);
+}
+
+:root[data-os="aero"] body[data-background="aurora"] .aero-hill {
+  display: block;
+  border-top: 34px solid var(--aero-ribbon-green);
+  background: none;
+  box-shadow: none;
+  filter: blur(12px);
+}
+
+:root[data-os="aero"] body[data-background="aurora"] .aero-hill-back {
+  bottom: -160px;
+  border-top-color: var(--aero-ribbon-cyan);
+}
+
+:root[data-os="aero"] body[data-background="aurora"] .aero-hill-front {
+  bottom: -300px;
+}
+
+/* Dusk: a low sun just above the hills. */
+:root[data-os="aero"] body[data-background="dusk"] .aero-sun {
+  top: auto;
+  bottom: 4vh;
+  right: 18%;
+}
+
+/* --- knowledge map: glass pill shortcut, a pale sky map with glossy marbles, glass reader --- */
+
+:root[data-os="aero"] {
+  --kmap-c0: var(--aero-c-blue);
+  --kmap-c1: var(--aero-c-green);
+  --kmap-c2: var(--aero-c-orange);
+  --kmap-c3: var(--aero-c-purple);
+  --kmap-c4: var(--aero-c-teal);
+  --kmap-c5: var(--aero-c-red);
+  --kmap-c6: #d9a100;
+  --kmap-c7: #c2408f;
+  --aero-kmap-sky: linear-gradient(180deg, #ffffff 0, #f1f9fe 55%, #dcf0fc 100%);
+  --aero-kmap-dot-edge: rgb(255 255 255 / 0.95);
+  --aero-kmap-shadow: drop-shadow(0 1px 1.5px rgb(8 50 90 / 0.35));
+  --aero-kmap-halo: rgb(80 180 245 / 0.75);
+}
+
+/* The shortcut: a glass pill like Feed and Trash; aqua while the map is open. */
+:root[data-os="aero"] .shell-link {
+  position: relative;
+  isolation: isolate;
+  min-height: var(--tap-target);
+  padding: 0 var(--space-3);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-strong);
+}
+
+:root[data-os="aero"] .shell-link::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--aero-button-glow);
+  box-shadow: var(--aero-button-glow-edge);
+  opacity: 0;
+}
+
+:root[data-os="aero"] .shell-link:hover::before {
+  opacity: 1;
+}
+
+:root[data-os="aero"] .shell-link[aria-current="page"] {
+  background: var(--aero-pill);
+  border-color: var(--aero-pill-edge);
+  box-shadow: var(--aero-pill-shadow);
+  color: var(--aero-white);
+  text-shadow: var(--aero-light-text-shadow);
+}
+
+:root[data-os="aero"] .shell-link[aria-current="page"]::before {
+  background: var(--aero-pill-glow);
+  box-shadow: none;
+}
+
+:root[data-os="aero"] .shell-link:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+:root[data-os="aero"] .shell-link .icon-sm {
+  width: 20px;
+  height: 20px;
+}
+
+:root[data-os="aero"] .kmap-search {
+  border-color: var(--aero-inset-edge);
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-3);
+  box-shadow: var(--bevel-sunken);
+  font-family: var(--font-chrome);
+}
+
+:root[data-os="aero"] .kmap-view[aria-pressed="true"] {
+  background: var(--aero-select-strong);
+  border-color: var(--aero-select-strong-edge);
+  box-shadow: var(--aero-select-glow);
+  color: var(--color-text);
+}
+
+:root[data-os="aero"] .kmap-map {
+  background-image: var(--aero-kmap-sky);
+  background-size: auto;
+}
+
+:root[data-os="aero"] .kmap-nodes {
+  filter: var(--aero-kmap-shadow);
+}
+
+:root[data-os="aero"] .kmap-edge {
+  stroke: var(--aero-c-steel);
+}
+
+:root[data-os="aero"] .kmap-edge[data-kind="tag"] {
+  stroke: var(--aero-c-paleblue);
+  stroke-dasharray: 3 3;
+}
+
+:root[data-os="aero"] .kmap-edge.is-near {
+  stroke: var(--color-focus);
+  stroke-width: 1.5px;
+}
+
+:root[data-os="aero"] .kmap-dot {
+  stroke: var(--aero-kmap-dot-edge);
+  stroke-width: 1.5px;
+}
+
+:root[data-os="aero"] .kmap-shine {
+  display: inline;
+  fill: var(--aero-ic-shine);
+  pointer-events: none;
+}
+
+:root[data-os="aero"] .kmap-node.is-recent .kmap-ring {
+  stroke: var(--aero-kmap-halo);
+  stroke-width: 3px;
+  stroke-dasharray: none;
+}
+
+:root[data-os="aero"] .kmap-node.is-selected .kmap-dot {
+  stroke: var(--color-focus);
+  stroke-width: 3px;
+}
+
+:root[data-os="aero"] .kmap-label {
+  font-weight: var(--font-weight-strong);
+}
+
+:root[data-os="aero"] .kmap-node.is-selected .kmap-label {
+  fill: var(--color-focus);
+}
+
+:root[data-os="aero"] .kmap-swatch {
+  border-color: var(--aero-kmap-dot-edge);
+  border-radius: 50%;
+  box-shadow: var(--aero-button-shadow);
+}
+
+:root[data-os="aero"] .kmap-node[data-cat="0"] .kmap-dot,
+:root[data-os="aero"] .kmap-swatch[data-cat="0"] {
+  fill: var(--kmap-c0);
+  background: var(--kmap-c0);
+}
+
+:root[data-os="aero"] .kmap-node[data-cat="1"] .kmap-dot,
+:root[data-os="aero"] .kmap-swatch[data-cat="1"] {
+  fill: var(--kmap-c1);
+  background: var(--kmap-c1);
+}
+
+:root[data-os="aero"] .kmap-node[data-cat="2"] .kmap-dot,
+:root[data-os="aero"] .kmap-swatch[data-cat="2"] {
+  fill: var(--kmap-c2);
+  background: var(--kmap-c2);
+}
+
+:root[data-os="aero"] .kmap-node[data-cat="3"] .kmap-dot,
+:root[data-os="aero"] .kmap-swatch[data-cat="3"] {
+  fill: var(--kmap-c3);
+  background: var(--kmap-c3);
+}
+
+:root[data-os="aero"] .kmap-node[data-cat="4"] .kmap-dot,
+:root[data-os="aero"] .kmap-swatch[data-cat="4"] {
+  fill: var(--kmap-c4);
+  background: var(--kmap-c4);
+}
+
+:root[data-os="aero"] .kmap-node[data-cat="5"] .kmap-dot,
+:root[data-os="aero"] .kmap-swatch[data-cat="5"] {
+  fill: var(--kmap-c5);
+  background: var(--kmap-c5);
+}
+
+:root[data-os="aero"] .kmap-node[data-cat="6"] .kmap-dot,
+:root[data-os="aero"] .kmap-swatch[data-cat="6"] {
+  fill: var(--kmap-c6);
+  background: var(--kmap-c6);
+}
+
+:root[data-os="aero"] .kmap-node[data-cat="7"] .kmap-dot,
+:root[data-os="aero"] .kmap-swatch[data-cat="7"] {
+  fill: var(--kmap-c7);
+  background: var(--kmap-c7);
+}
+
+:root[data-os="aero"] .kmap-panel {
+  border: var(--border-width) solid var(--aero-inset-edge);
+  border-radius: 10px;
+  background: var(--aero-panel);
+  box-shadow: var(--bevel-sunken);
+}
+
+:root[data-os="aero"] .kmap-note-title {
+  font-weight: var(--font-weight-strong);
+}
+
+/* Aero's accent is a pale selection fill, unreadable as text: links take the aqua focus ink. */
+:root[data-os="aero"] .kmap-link,
+:root[data-os="aero"] .kmap-link:hover {
+  color: var(--color-focus);
+}
+
+:root[data-os="aero"] .kmap-link.is-missing {
+  color: var(--color-text-muted);
+}
+
+:root[data-os="aero"] .kmap-tag {
+  border-color: var(--aero-select-edge);
+  background: var(--aero-select);
+  color: var(--color-text);
+}
+
+:root[data-os="aero"] .kmap-entry-button {
+  border: var(--border-width) solid transparent;
+  border-radius: 6px;
+}
+
+/* Explorer's pale selection, not the strong accent fill. */
+:root[data-os="aero"] .kmap-entry-button:hover,
+:root[data-os="aero"] .kmap-entry.is-selected .kmap-entry-button {
+  background: var(--aero-select);
+  border-color: var(--aero-select-edge);
+  color: var(--color-text);
+}
+
+:root[data-os="aero"] .kmap-entry-button:hover .kmap-new,
+:root[data-os="aero"] .kmap-entry.is-selected .kmap-new {
+  color: var(--color-text-muted);
+}
+
+:root[data-os="aero"] .kmap-approval {
+  border-bottom-style: solid;
+  border-bottom-color: var(--color-rule);
+}
+
+/* --- phones: the bar keeps orb, Feed, Trash, a picture-glyph Background button and OS --- */
+
+@media (max-width: 37.49rem) {
+  :root[data-os="aero"] .shell-bar {
+    gap: 0;
+    padding-left: var(--space-1);
+    padding-right: var(--space-1);
+  }
+
+  :root[data-os="aero"] .shell-bar .desk-icon,
+  :root[data-os="aero"] .shell-menu-trigger {
+    padding: 0 var(--space-3);
+  }
+
+  :root[data-os="aero"] .shell-clock {
+    display: none;
+  }
+
+  :root[data-os="aero"] .shell-link {
+    width: var(--tap-target);
+    padding: 0;
+  }
+
+  /* The label stays the accessible name; a tiny sky-and-grass tile shows instead. */
+  :root[data-os="aero"] .shell-menu-trigger[data-shell-trigger="background"] {
+    width: var(--tap-target);
+    padding: 0;
+    justify-content: center;
+    font-size: 0;
+  }
+
+  :root[data-os="aero"] .shell-menu-trigger[data-shell-trigger="background"]::after {
+    content: "";
+    width: 22px;
+    height: 17px;
+    border: 2px solid var(--aero-white);
+    border-radius: 4px;
+    background: var(--aero-mini-wallpaper);
+    box-shadow: var(--aero-button-shadow);
+  }
+
+  :root[data-os="aero"] .aero-sun {
+    right: -30%;
+  }
+
+  :root[data-os="aero"] .aero-bubble-1,
+  :root[data-os="aero"] .aero-bubble-5 {
+    display: none;
+  }
+
+  :root[data-os="aero"] .window-body {
+    padding: var(--space-2);
+  }
+
+  :root[data-os="aero"] .titlebar {
+    padding-left: var(--space-3);
+  }
+}
+
+/* --- wider screens: the bar floats, with the app name beside the orb --- */
+
+@media (min-width: 37.5rem) {
+  :root[data-os="aero"] .shell-bar {
+    top: var(--space-2);
+    margin: var(--space-2) var(--space-3) 0;
+    padding: 0 var(--space-2);
+  }
+
+  :root[data-os="aero"] .shell-bar::before {
+    border: var(--border-width) solid var(--aero-glass-edge);
+    border-radius: 18px;
+  }
+
+  :root[data-os="aero"] .shell-app {
+    margin-right: var(--space-3);
+    font-size: 1.375rem;
+    font-weight: var(--font-weight-strong);
+    letter-spacing: var(--letter-spacing-heading);
+  }
+
+  :root[data-os="aero"] .shell-bar .desk-icon {
+    padding: 0 var(--space-4);
+  }
+
+  :root[data-os="aero"] .desktop {
+    padding-top: var(--space-5);
+  }
+}

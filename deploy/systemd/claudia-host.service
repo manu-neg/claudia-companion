@@ -1,0 +1,103 @@
+# claudia-host.service — the Claudia companion host (ADR 0031, ADR 0036).
+# Reads the owner's screened Telegram messages from the admin inbox and runs
+# `claude -p --resume` turns for them on the root subscription login. Only
+# installed with `deploy/install.sh --claudia`; enabled only when
+# config.toml has `claudia_enabled = true` (off by default).
+#
+# Runs as ROOT on purpose (ADR 0036): Claude Code here uses the owner's root
+# subscription login and may dispatch work anywhere under /root, so it is not
+# sandboxed like the dashboard services (docs/security.md Known limitations).
+# What confines her runs is the host's own checks (C49-C52, C59/C60), not
+# this unit. Group=pdash-claudiatok: the process's egid is the claudia
+# token's group, the one group TokenLoader trusts for its own token (C45).
+
+[Unit]
+Description=Claudia companion host (owner messages -> Claude Code turns)
+Documentation=file:///opt/preview-dashboard/docs/operations.md
+Documentation=file:///opt/preview-dashboard/docs/security.md
+After=network-online.target preview-dashboard-admin.service preview-dashboard-notifier.service
+Wants=network-online.target
+# No admin API, no inbox: nothing to do (and the host fails closed anyway).
+Requires=preview-dashboard-admin.service
+# Skip (not fail) until every root-owned input exists; install.sh writes
+# them, `claudia totp setup` (owner step) writes the TOTP secret.
+ConditionPathExists=/etc/preview-dashboard/claudia.token
+ConditionPathExists=/etc/preview-dashboard/claudia-settings.json
+ConditionPathExists=/etc/preview-dashboard/claudia-mcp.json
+ConditionPathExists=/etc/preview-dashboard/totp.secret
+
+[Service]
+Type=simple
+User=root
+Group=pdash-claudiatok
+# Files her dispatched work creates keep root's usual modes.
+UMask=0022
+
+# C49 / D15: subscription only. The host also refuses to start if any of
+# these is set; unsetting them here means a stray drop-in or the manager's
+# own environment can never hand one to a `claude` child.
+UnsetEnvironment=ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX
+Environment=HOME=/root
+# PDASH_CLAUDE_BIN (install.sh --claude-bin). Required, braced: a missing
+# value becomes "" and the host's argparse refuses it (exit 2, fail closed).
+EnvironmentFile=/etc/preview-dashboard/claudia.env
+# `python -I`: isolated mode, so neither the working directory nor PYTHON*
+# variables can put a planted module on the import path.
+ExecStart=/opt/preview-dashboard/.venv/bin/python -I -m preview_dashboard.interfaces.claudia.main --admin-socket /run/preview-dashboard/admin.sock --token-file /etc/preview-dashboard/claudia.token --settings /etc/preview-dashboard/claudia-settings.json --mcp-config /etc/preview-dashboard/claudia-mcp.json --state-dir /var/lib/claudia-host --workdir /var/lib/claudia-host/work --home /root --claude-bin ${PDASH_CLAUDE_BIN} --require-run-cgroups
+
+# C58: systemd restarts the host after a crash; a service stop kills the
+# whole unit cgroup (every `claude` run and the jobs it started).
+Restart=on-failure
+RestartSec=5s
+RestartSteps=5
+RestartMaxDelaySec=60s
+KillMode=control-group
+TimeoutStopSec=30s
+# host-flow-5 (ADR 0039): the host owns its cgroup subtree. It runs in the
+# `host` leaf; each `claude` run gets a sibling leaf `run-<n>-<pid>`, so
+# `/stop` reaches detached background jobs with `cgroup.kill`. The runs stay
+# inside this unit: MemoryMax/TasksMax and KillMode still cover them.
+# --require-run-cgroups: the host refuses to start without this delegation.
+Delegate=yes
+DelegateSubgroup=host
+
+# --- filesystem ------------------------------------------------------------
+# State (audit log, windows) in /var/lib/claudia-host (root 0700, install.sh).
+# RuntimeDirectory: the 0700 home of the C59 hook control socket (unit M5a).
+WorkingDirectory=/var/lib/claudia-host
+RuntimeDirectory=claudia-host
+RuntimeDirectoryMode=0700
+
+# --- what little hardening fits a root agent host --------------------------
+# Nothing here may stop her approved work (git, gh, file edits under /root),
+# so no ProtectSystem/ProtectHome/RestrictSUIDSGID. deploy/install.sh is NOT
+# her work: it refuses to run inside this unit's cgroup (restarting the
+# admin restarts this unit and would kill it mid-run, deploy-4). The
+# kernel-facing knobs below never touch that work.
+# deploy-7 (advisory only, C47/C34): she never needs the TOTP secret or the
+# notifier/bot tokens (ConditionPathExists= is checked by PID 1, outside
+# this namespace). A root process with CAP_SYS_ADMIN can undo a mask, so
+# this is defense in depth, not a boundary (docs/security.md Known
+# limitations). claudia.token and admin.token stay: the host and the
+# dashboard MCP server it launches read them.
+InaccessiblePaths=-/etc/preview-dashboard/totp.secret -/etc/preview-dashboard/notifier.token -/etc/preview-dashboard/telegram.token
+NoNewPrivileges=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+RestrictRealtime=yes
+
+# --- resource limits (2 CPU / 8 GB host; Piper needs ~350 MB) -------------
+MemoryMax=3G
+TasksMax=512
+CPUWeight=50
+
+# --- logging: journald only; the host logs ids and type names, never text --
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=claudia-host
+
+[Install]
+WantedBy=multi-user.target

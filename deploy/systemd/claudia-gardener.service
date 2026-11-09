@@ -1,0 +1,86 @@
+# claudia-gardener.service — one weekly knowledge-base gardening pass
+# (docs/security.md C54, unit M7), triggered by claudia-gardener.timer.
+# Runs as root (it runs `claude -p --model haiku` on the root subscription
+# login) but, unlike the host, is confined: it only writes the KB and Claude
+# Code's own state, and its model has the KB tool as its only tool.
+
+[Unit]
+Description=Claudia knowledge-base gardener (weekly, Haiku with only the KB tool)
+Documentation=file:///opt/preview-dashboard/docs/operations.md
+Documentation=file:///opt/preview-dashboard/docs/security.md
+After=network-online.target preview-dashboard-admin.service
+Wants=network-online.target
+ConditionPathIsDirectory=/var/lib/claudia-kb
+
+[Service]
+Type=oneshot
+User=root
+# egid pdash-kb: notes the KB tool creates land group pdash-kb (the
+# viewer's read group, C57); --viewer-gid does the same for the gardener's
+# own writes. Supplementary pdash: reach the admin socket (0660
+# pdash-admin:pdash) with no capabilities at all.
+Group=pdash-kb
+SupplementaryGroups=pdash
+UMask=0027
+
+# C49 / D15, as in claudia-host.service.
+UnsetEnvironment=ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX
+Environment=HOME=/root
+# PDASH_CLAUDE_BIN, PDASH_KB_GID (install.sh). Required + braced: missing
+# values become "" and the gardener refuses them (fail closed).
+EnvironmentFile=/etc/preview-dashboard/claudia.env
+ExecStart=/opt/preview-dashboard/.venv/bin/python -I -m preview_dashboard.interfaces.claudia.gardener --kb-root /var/lib/claudia-kb --socket /run/preview-dashboard/admin.sock --token-file /etc/preview-dashboard/admin.token --claude-bin ${PDASH_CLAUDE_BIN} --viewer-gid ${PDASH_KB_GID}
+# The gardener's own wall clock is 20 min per model run (adapter); this is
+# the outer bound for the whole pass.
+TimeoutStartSec=45min
+
+# --- filesystem: write the KB + Claude Code's own state, nothing else -----
+WorkingDirectory=/var/lib/claudia-kb
+ReadWritePaths=/var/lib/claudia-kb
+# "-": absent on a host where `claude` never ran yet (the run then fails
+# on the missing login, which is what should happen).
+ReadWritePaths=-/root/.claude -/root/.claude.json -/root/.cache
+# deploy-2: root without capabilities still reads every root-owned 0640/0700
+# file by owner bits, and SupplementaryGroups=pdash adds db/ and blobs/. The
+# gardener needs only the KB, the admin socket and admin.token: hide the data
+# dir, the host's state and every other secret (C54, C47). No "-" on the
+# data dir: it always exists where this unit is installed (fail closed).
+InaccessiblePaths=/var/lib/preview-dashboard -/var/lib/claudia-host
+InaccessiblePaths=-/etc/preview-dashboard/totp.secret -/etc/preview-dashboard/claudia.token -/etc/preview-dashboard/notifier.token -/etc/preview-dashboard/telegram.token
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+
+# --- network: Claude's API over TLS + the admin socket ---------------------
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+# --- privilege / syscall surface -----------------------------------------
+# No capabilities: root here is only "the owner of root's files" (KB,
+# ~/.claude); the admin token (root:pdash) and socket go via the groups.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# No MemoryDenyWriteExecute: the `claude` CLI is a JIT runtime.
+SystemCallArchitectures=native
+RemoveIPC=yes
+
+# --- resource limits -------------------------------------------------------
+MemoryMax=1G
+TasksMax=128
+CPUWeight=20
+
+# --- logging: journald only; counts and status, never note text (C29) -----
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=claudia-gardener

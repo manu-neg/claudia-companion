@@ -1,0 +1,130 @@
+# preview-dashboard-viewer.service — the owner-facing dashboard + preview apps.
+# Binds loopback only (127.0.0.1:8787 dashboard, 127.0.0.1:8788 preview);
+# reachable from outside the host only via `tailscale serve` (ADR 0002).
+# Runs as pdash-viewer, Group=pdash: read+write db/ (trash/restore),
+# read-only blobs/staging (ADR 0013, C28). The viewer's own account is not
+# a member of any "pdash" /etc/group entry — Group= below sets the
+# process's effective gid directly, which is what both the kernel's file
+# permission checks and FsBlobStore/SQLite's `os.getegid()`-based trust
+# need (ADR 0017 "G"). PDASH_ADMIN_UID (below) is resolved by install.sh
+# at install time and passed as --trusted-owner-uid so the viewer's
+# FsBlobStore/SQLite connection trust files pdash-admin wrote
+# (docs/architecture.md "Composition root").
+
+[Unit]
+Description=Preview Dashboard viewer (dashboard + preview apps, tailnet only)
+Documentation=file:///opt/preview-dashboard/docs/operations.md
+Documentation=file:///opt/preview-dashboard/docs/security.md
+# Requires= the loopback firewall (C14): if the rule can't be loaded the
+# viewer does not start (fail closed). After= admin: the viewer never
+# creates the DB, it needs admin/migrate to have run (ADR 0014).
+After=network.target tailscaled.service preview-dashboard-firewall.service preview-dashboard-admin.service
+Wants=tailscaled.service
+Requires=preview-dashboard-firewall.service
+
+[Service]
+Type=simple
+User=pdash-viewer
+Group=pdash
+# pdash-kb (M9, ADR 0036): read-only access to the knowledge base (root:pdash-kb
+# 0750, files 0640) for the knowledge map (C57). install.sh creates the group
+# on every host, so this unit starts whether or not Claudia is installed.
+SupplementaryGroups=pdash-kb
+UMask=0007
+
+# PDASH_ADMIN_UID is written by install.sh once pdash-admin exists (system
+# users get a dynamically assigned uid; this file lets that uid flow into
+# the unit without editing it). See docs/operations.md "Deployment".
+EnvironmentFile=/etc/preview-dashboard/admin-uid.env
+ExecStart=/opt/preview-dashboard/.venv/bin/preview-dashboard serve-viewer --trusted-owner-uid ${PDASH_ADMIN_UID}
+
+Restart=on-failure
+RestartSec=2s
+RestartSteps=5
+RestartMaxDelaySec=30s
+TimeoutStopSec=10s
+
+# --- filesystem ------------------------------------------------------------
+# Deliberately NO StateDirectory= here: systemd recursively re-chowns a
+# *Directory= path to the unit's own User/Group whenever the existing
+# owner doesn't match (systemd.exec(5), "...will have their file ownership
+# recursively changed..."). /var/lib/preview-dashboard must stay owned by
+# pdash-admin (FsBlobStore's trusted_owner_uids, C25) — install.sh creates
+# it once; this unit only ever asks for scoped read/write access to it.
+RuntimeDirectory=preview-dashboard-viewer
+RuntimeDirectoryMode=0750
+WorkingDirectory=/opt/preview-dashboard
+ReadWritePaths=/var/lib/preview-dashboard/db
+ReadOnlyPaths=/var/lib/preview-dashboard
+ReadOnlyPaths=/var/lib/preview-dashboard/blobs
+ReadOnlyPaths=/var/lib/preview-dashboard/staging
+ReadOnlyPaths=/etc/preview-dashboard
+# The viewer never reads the admin bearer token (it has no admin API
+# client); denying it outright means a path-traversal or config bug in this
+# process can't exfiltrate it even though /etc/preview-dashboard is
+# otherwise readable (it needs config.toml). /run/preview-dashboard is the
+# *admin* service's own RuntimeDirectory (holds admin.sock, C26); the
+# viewer has no admin API client and no legitimate reason to reach it
+# either, so it is masked the same way, even though ProtectSystem=strict
+# does not hide /run by itself (unit 12 audit, L1).
+InaccessiblePaths=/root /home /etc/preview-dashboard/admin.token /run/preview-dashboard
+# Claudia (M9; C57 = I2's one amendment, S-C1 S1/S2): the KB is the only
+# extra root, and read-only. The admin-only Claudia DB dir, voice store,
+# step-up state, host state and both Claudia secrets are masked on top of
+# their own modes. "-": absent on hosts without Claudia (no start failure).
+# A "-" path missing at viewer start is skipped, and a file renamed over
+# (totp setup --rotate, token rotation, every step-up state write) drops its
+# mask in this namespace: install.sh pre-creates the dirs before restarting
+# the viewer, check.sh verifies each mask with findmnt, and the modes stay
+# the load-bearing control (deploy-3). Restart the viewer after a rotation.
+ReadOnlyPaths=-/var/lib/claudia-kb
+InaccessiblePaths=-/var/lib/preview-dashboard/claudia -/var/lib/preview-dashboard/voice -/var/lib/claudia-host -/etc/preview-dashboard/totp.secret -/etc/preview-dashboard/claudia.token
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+
+# --- network: loopback only, and only the viewer's own connections -------
+# The nftables rule (deploy/nftables/preview-dashboard.nft, C14) is what
+# stops *other* local users from reaching 127.0.0.1:8787/8788 — this
+# process itself is additionally confined to IPv4/IPv6/Unix and to
+# loopback destinations, so even a bug here can't reach the wider network.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+# --- privilege / syscall surface -----------------------------------------
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# See the admin unit's comment: verify before relying on this in prod.
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallArchitectures=native
+RemoveIPC=yes
+
+# --- resource limits -------------------------------------------------------
+MemoryMax=512M
+TasksMax=64
+LimitNOFILE=4096
+
+# --- logging: journald only; no access log with query strings (C29) ------
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=preview-dashboard-viewer
+
+[Install]
+WantedBy=multi-user.target

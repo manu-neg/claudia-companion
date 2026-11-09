@@ -1,0 +1,103 @@
+# preview-dashboard-notifier.service — Telegram notifier (deliveries + taps).
+# Only installed/enabled when `deploy/install.sh --telegram-chat-id` was
+# given (docs/security.md C33/C38); a host without that flag never has this
+# unit at all, so its absence changes nothing about the admin/viewer/purge
+# services (they behave exactly as before the notifier existed).
+
+[Unit]
+Description=Preview Dashboard Telegram notifier (deliveries and answer buttons)
+Documentation=file:///opt/preview-dashboard/docs/operations.md
+Documentation=file:///opt/preview-dashboard/docs/security.md
+Documentation=file:///opt/preview-dashboard/docs/notifier.md
+# After the admin socket exists and the firewall (egress rule) is loaded;
+# Requires= the firewall the same way the viewer does (fail closed, C38).
+After=network-online.target preview-dashboard-firewall.service preview-dashboard-admin.service
+Wants=network-online.target
+Requires=preview-dashboard-firewall.service
+# Skip (not fail) starting if either token isn't in place yet -- lets
+# install.sh enable this unit before `notify pair`/token provisioning
+# without a crash-loop; `systemctl status` shows "condition failed", not a
+# failure, and nothing here ever reads a partially-written token.
+ConditionPathExists=/etc/preview-dashboard/notifier.token
+ConditionPathExists=/etc/preview-dashboard/telegram.token
+
+[Service]
+Type=simple
+# Own primary group `pdash-notify`, not `pdash`: this process must never be
+# able to read admin.token or touch db/blobs/ (least privilege, C33). The
+# supplementary group `pdash-notifytok` (shared only with pdash-admin) is
+# the sole extra grant, scoped to notifier.token alone (C36).
+User=pdash-notify
+Group=pdash-notify
+SupplementaryGroups=pdash-notifytok
+UMask=0077
+
+# notifier=: pdash-notifytok is trusted for notifier.token only; telegram.token
+# (root:pdash-notify) is this process's own file, trusted via its egid (ADR 0024).
+ExecStart=/opt/preview-dashboard/.venv/bin/preview-dashboard serve-notifier --token-group notifier=pdash-notifytok
+
+Restart=on-failure
+RestartSec=2s
+RestartSteps=5
+RestartMaxDelaySec=30s
+TimeoutStopSec=10s
+
+# --- filesystem: no write access anywhere; read-only config + its own two
+# token files (telegram.token via the primary group, notifier.token via the
+# supplementary one above) -------------------------------------------------
+WorkingDirectory=/opt/preview-dashboard
+ReadOnlyPaths=/etc/preview-dashboard
+# No DB/blob access ever (C33); admin.token stays masked even though group
+# perms already refuse it, same defense-in-depth as the viewer unit.
+InaccessiblePaths=/root /home /var/lib/preview-dashboard /etc/preview-dashboard/admin.token
+# Claudia (M9): the notifier relays codes, it never reads the TOTP secret,
+# the claudia token or the knowledge base. "-": absent without Claudia.
+InaccessiblePaths=-/etc/preview-dashboard/totp.secret -/etc/preview-dashboard/claudia.token -/var/lib/claudia-kb -/var/lib/claudia-host
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+
+# --- network: outbound only. AF_UNIX for the admin socket (notifier token,
+# access granted by the admin unit's own ACL, see its ExecStartPost);
+# AF_INET/AF_INET6 for Telegram's Bot API (TLS) and DNS. No
+# IPAddressDeny=/IPAddressAllow=: egress is enforced by the nft uid rule
+# (C38, deploy/nftables/preview-dashboard.nft), which can restrict to port
+# 443 + DNS specifically -- systemd's own IP allowlist can't express "any
+# host on 443" without hardcoding Telegram's address ranges.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+# --- privilege / syscall surface -----------------------------------------
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallArchitectures=native
+RemoveIPC=yes
+
+# --- resource limits -------------------------------------------------------
+MemoryMax=256M
+TasksMax=32
+LimitNOFILE=4096
+
+# --- logging: journald only; never a token or Telegram URL (C29, C36) -----
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=preview-dashboard-notifier
+
+[Install]
+WantedBy=multi-user.target

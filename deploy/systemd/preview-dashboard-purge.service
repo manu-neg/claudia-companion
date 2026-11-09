@@ -1,0 +1,69 @@
+# preview-dashboard-purge.service — one purge pass (trash retention + orphan
+# + staging sweeps), triggered hourly by preview-dashboard-purge.timer.
+# Runs as pdash-admin:pdash (same user as the admin API: purge deletes
+# rows and blobs the admin process owns — ADR 0013, ADR 0017 "G", C28).
+
+[Unit]
+Description=Preview Dashboard purge (expired trash + orphan/staging sweep)
+Documentation=file:///opt/preview-dashboard/docs/operations.md
+Documentation=file:///opt/preview-dashboard/docs/security.md
+
+[Service]
+Type=oneshot
+User=pdash-admin
+Group=pdash
+UMask=0007
+# --trusted-sidecar-uid: the viewer may own -wal/-shm only (ADR 0025); env
+# file required, braced: unset -> "" -> purge exits 2 (fail closed).
+EnvironmentFile=/etc/preview-dashboard/viewer-uid.env
+ExecStart=/opt/preview-dashboard/.venv/bin/preview-dashboard purge --trusted-sidecar-uid ${PDASH_VIEWER_UID}
+
+# --- filesystem ------------------------------------------------------------
+StateDirectory=preview-dashboard
+StateDirectoryMode=0750
+RuntimeDirectory=preview-dashboard-purge
+RuntimeDirectoryMode=0750
+WorkingDirectory=/opt/preview-dashboard
+ReadWritePaths=/var/lib/preview-dashboard
+ReadOnlyPaths=/etc/preview-dashboard
+InaccessiblePaths=/root /home
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+
+# --- network: purge never touches the network -----------------------------
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+
+# --- privilege / syscall surface -----------------------------------------
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallArchitectures=native
+RemoveIPC=yes
+
+# --- resource limits -------------------------------------------------------
+MemoryMax=256M
+TasksMax=16
+LimitNOFILE=4096
+
+# --- logging: journald only, one JSON report line per run (C29) ----------
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=preview-dashboard-purge

@@ -1,0 +1,182 @@
+/*
+  Layout for the preview-origin text renderer page (/r/). Inlined into the page together with
+  theme.css, so it uses theme tokens only — no colors, fonts or sizes of its own.
+*/
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-body);
+  -webkit-text-size-adjust: 100%;
+}
+
+.r-root {
+  padding: var(--space-4);
+}
+
+.r-banner,
+.r-note {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+}
+
+.r-banner {
+  background: var(--color-warning-soft);
+  color: var(--color-warning-text);
+}
+
+.r-note {
+  background: var(--color-surface-sunken);
+  color: var(--color-text-muted);
+}
+
+.r-pre {
+  margin: 0;
+  padding: var(--space-3);
+  overflow: auto;
+  background: var(--color-surface-sunken);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-body);
+  tab-size: 4;
+}
+
+.r-pre.r-wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* hljs themes paint their own background; keep ours so both schemes match the dashboard. */
+.r-code.hljs,
+.r-markdown pre code.hljs {
+  background: transparent;
+  padding: 0;
+}
+
+.r-markdown {
+  max-width: var(--reading-max-width);
+  overflow-wrap: anywhere;
+}
+
+.r-markdown h1,
+.r-markdown h2,
+.r-markdown h3 {
+  line-height: var(--line-height-tight);
+  letter-spacing: var(--letter-spacing-heading);
+}
+
+.r-markdown a {
+  color: var(--color-accent);
+}
+
+.r-markdown img {
+  max-width: 100%;
+}
+
+.r-markdown pre {
+  padding: var(--space-3);
+  overflow: auto;
+  background: var(--color-surface-sunken);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+}
+
+.r-markdown code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+.r-markdown blockquote {
+  margin-inline: 0;
+  padding-inline-start: var(--space-4);
+  border-inline-start: 3px solid var(--color-border-strong);
+  color: var(--color-text-muted);
+}
+
+.r-markdown table,
+.r-table {
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+
+.r-markdown th,
+.r-markdown td,
+.r-table th,
+.r-table td {
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-width) solid var(--color-border);
+  text-align: start;
+  vertical-align: top;
+  unicode-bidi: isolate;
+}
+
+.r-table-wrap {
+  overflow: auto;
+  max-width: 100%;
+}
+
+.r-table th {
+  position: sticky;
+  top: 0;
+  background: var(--color-surface-sunken);
+  font-weight: var(--font-weight-strong);
+}
+
+.r-table td {
+  max-width: 32rem;
+  overflow-wrap: anywhere;
+}
+
+.r-json {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.r-json-children {
+  padding-inline-start: var(--space-4);
+  border-inline-start: var(--border-width) solid var(--color-border);
+  margin-inline-start: var(--space-1);
+}
+
+.r-json-summary {
+  cursor: pointer;
+}
+
+.r-json-key {
+  color: var(--color-accent);
+  margin-inline-end: var(--space-2);
+  unicode-bidi: isolate;
+}
+
+.r-json-key::after {
+  content: ":";
+}
+
+.r-json-meta,
+.r-json-null,
+.r-json-boolean {
+  color: var(--color-text-muted);
+}
+
+.r-json-string {
+  unicode-bidi: isolate;
+}
+
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: 2px;
+}

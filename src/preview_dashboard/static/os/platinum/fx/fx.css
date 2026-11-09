@@ -1,0 +1,114 @@
+/*
+  Platinum cosmetic layer styles (backlog R5; docs/frontend-fx.md): zoom-open, window shade,
+  watch cursor, splash and screensaver. Every rule is scoped to :root[data-os="platinum"] and
+  every @keyframes name starts with "platinum-" (docs/frontend-os.md). Reuses the theme tokens;
+  no external references of any kind. Never loaded if os/platinum/fx/ is missing: the app works
+  with none of this applied.
+*/
+
+/* --- zoom-open: CSS-only approximation (CSP forbids inline transform-origin
+   per window rect), anchored toward the desktop icons for list windows and
+   centered for detail/alert windows. --- */
+@keyframes platinum-zoom-in {
+  from {
+    opacity: 0;
+    transform: scale(0.55);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+:root[data-os="platinum"] .fx-zoom-in {
+  animation: platinum-zoom-in 180ms ease-out;
+  transform-origin: 85% 10%;
+}
+
+:root[data-os="platinum"] body[data-view="item"] .fx-zoom-in,
+:root[data-os="platinum"] body[data-view="missing"] .fx-zoom-in {
+  transform-origin: 50% 35%;
+}
+
+/* --- window shade: the body stays in the DOM, just hidden --- */
+:root[data-os="platinum"] .fx-shaded .window-body {
+  display: none;
+}
+
+/* --- watch cursor while a navigation looks in flight --- */
+:root[data-os="platinum"].fx-busy,
+:root[data-os="platinum"].fx-busy * {
+  cursor: wait;
+}
+
+/* --- startup splash: catches the dismissing input (pointer-events default),
+   never blocks the app once removed --- */
+:root[data-os="platinum"] .fx-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* accent (not the desktop colour): white on --color-bg is only ~3.2:1, too low for the small hint */
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+}
+
+:root[data-os="platinum"] .fx-splash-panel {
+  text-align: center;
+  font-family: var(--font-chrome);
+}
+
+:root[data-os="platinum"] .fx-splash-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-strong);
+}
+
+:root[data-os="platinum"] .fx-splash-hint {
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+/* --- idle screensaver: same catch-and-dismiss contract as the splash --- */
+:root[data-os="platinum"] .fx-screensaver {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  overflow: hidden;
+  background: var(--color-media-bg);
+}
+
+@keyframes platinum-drift {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 200px 200px;
+  }
+}
+
+:root[data-os="platinum"] .fx-screensaver-pattern {
+  position: absolute;
+  inset: -200px;
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--color-border) 0 2px,
+    transparent 2px 40px
+  );
+  animation: platinum-drift 12s linear infinite;
+}
+
+/* backlog §4: reduced motion turns off animation, not the whole layer -
+   the clock, shade and the watch cursor stay (fx.js still runs them).
+   zoom.js still adds .fx-zoom-in (cleaned up by a timeout fallback since
+   "animationend" never fires here), so this rule is the one doing the actual
+   work for that effect; the screensaver rule is defense in depth (fx.js also
+   skips initScreensaver entirely under reduced motion). */
+@media (prefers-reduced-motion: reduce) {
+  :root[data-os="platinum"] .fx-zoom-in,
+  :root[data-os="platinum"] .fx-screensaver-pattern {
+    animation: none;
+  }
+}

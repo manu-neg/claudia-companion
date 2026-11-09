@@ -1,0 +1,26 @@
+# deploy/claudia/mcp.json.in — Claudia's MCP servers (C51, C53; unit M9).
+# install.sh --claudia drops these "#" lines, puts the numeric pdash-kb gid
+# in @KB_GID@ and writes /etc/preview-dashboard/claudia-mcp.json (root 0644).
+# No env blocks, no tokens; the dashboard's Telegram tools are disallowed by the host's argv (C51).
+{
+  "mcpServers": {
+    "preview-dashboard": {
+      "command": "/opt/preview-dashboard/.venv/bin/preview-dashboard-mcp",
+      "args": []
+    },
+    "claudia-kb": {
+      "command": "/opt/preview-dashboard/.venv/bin/python",
+      "args": [
+        "-I",
+        "-m",
+        "preview_dashboard.interfaces.claudia.kb_mcp",
+        "--root",
+        "/var/lib/claudia-kb",
+        "--caller",
+        "claudia",
+        "--viewer-gid",
+        "@KB_GID@"
+      ]
+    }
+  }
+}

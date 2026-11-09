@@ -1,0 +1,55 @@
+{
+  "//": [
+    "deploy/tailscale/acl-snippet.json — merge these keys into the tailnet's",
+    "policy file (Tailscale admin console -> Access Controls). Not a",
+    "standalone policy: it omits everything unrelated to this host.",
+    "",
+    "Effect: only the owner's own identity may reach this host's dashboard",
+    "(443) and preview (8443) ports (docs/security.md C1, ADR 0002 'A",
+    "tailnet ACL further restricts the service to the owner's own identity,",
+    "as defense in depth beyond the app-level identity check'). Replace",
+    "OWNER_LOGIN with the Tailscale login you open the dashboard with (the",
+    "same value given to the wizard as `owner_login`, C2).",
+    "",
+    "GRANTS ARE ADDITIVE: this grant restricts nothing on its own. A new",
+    "tailnet's default policy allows everything ({\"src\":[\"*\"],\"dst\":[\"*\"],",
+    "\"ip\":[\"*\"]} in `grants`, or an `acls` rule {\"action\":\"accept\",",
+    "\"src\":[\"*\"],\"dst\":[\"*:*\"]}). Remove that rule, or narrow it so no",
+    "src other than OWNER_LOGIN reaches tag:pdash; otherwise every tailnet",
+    "device can still reach the dashboard.",
+    "",
+    "The `tests` block makes the admin console reject a policy that breaks",
+    "this: replace OTHER_LOGIN with any other user (or tag) in your tailnet,",
+    "or delete that entry if you are its only user, and verify by hand from",
+    "a non-owner device instead (docs/setup.md step 3).",
+    "",
+    "Tag the dashboard host itself with tag:pdash (preferably in the admin",
+    "console, Machines -> Edit ACL tags; or `tailscale up",
+    "--advertise-tags=tag:pdash`) so this grant follows the host even if its",
+    "hostname changes.",
+    "",
+    "Funnel must stay off for this host (verified by",
+    "deploy/tailscale/serve.sh). Also drop any `funnel` entry in `nodeAttrs`",
+    "that would match this host, so nobody on it can turn Funnel on."
+  ],
+  "tagOwners": {
+    "tag:pdash": ["autogroup:admin"]
+  },
+  "grants": [
+    {
+      "src": ["OWNER_LOGIN"],
+      "dst": ["tag:pdash"],
+      "ip": ["443", "8443"]
+    }
+  ],
+  "tests": [
+    {
+      "src": "OWNER_LOGIN",
+      "accept": ["tag:pdash:443", "tag:pdash:8443"]
+    },
+    {
+      "src": "OTHER_LOGIN",
+      "deny": ["tag:pdash:443", "tag:pdash:8443"]
+    }
+  ]
+}

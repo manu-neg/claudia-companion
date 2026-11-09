@@ -1,0 +1,18 @@
+# preview-dashboard-purge.timer — runs preview-dashboard-purge.service
+# hourly. Persistent=true so a missed run (host was off) fires once at the
+# next boot instead of silently skipping a cycle; a small randomized delay
+# avoids every purge run landing on exactly :00:00.
+
+[Unit]
+Description=Hourly trigger for the Preview Dashboard purge job
+Documentation=file:///opt/preview-dashboard/docs/operations.md
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=90s
+AccuracySec=1min
+Unit=preview-dashboard-purge.service
+
+[Install]
+WantedBy=timers.target

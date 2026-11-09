@@ -1,0 +1,33 @@
+# preview-dashboard-firewall.service — loads the loopback firewall (C14).
+# Only this project's own nft table (`inet preview_dashboard`) is loaded and
+# removed; it never flushes the ruleset or touches nftables.service, so
+# tailscaled's rules are left alone. The viewer Requires= this unit, so it
+# can't run without the rule (fail closed). See ADR 0002 / ADR 0017.
+
+[Unit]
+Description=Preview Dashboard loopback firewall (only tailscaled may reach the viewer ports)
+Documentation=file:///opt/preview-dashboard/docs/security.md
+Documentation=file:///opt/preview-dashboard/docs/operations.md
+Before=preview-dashboard-viewer.service
+After=network-pre.target
+# No ExecStartPre= health check: `nft -f` in ExecStart already fails closed
+# (a bad/missing rule file means this unit — and, via Requires=, the viewer
+# — never starts). To check by hand that the table is actually loaded
+# right now (e.g. after another tool flushed the ruleset without restarting
+# this unit, see docs/operations.md "Network exposure"):
+#   nft list table inet preview_dashboard   # exits non-zero ("No such file") if it's gone
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/preview-dashboard/preview-dashboard.nft
+# Leading "-": ignore a nonzero exit here. Something else flushing the whole
+# ruleset (nftables.service, ufw, firewalld) removes our table along with
+# everything else — see docs/operations.md "Network exposure" for the
+# required recovery step. Without "-" that leaves this table gone but the
+# rule already deleted, so `stop`/`restart` would themselves report failed
+# for a no-op, which is more confusing than useful.
+ExecStop=-/usr/sbin/nft delete table inet preview_dashboard
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,112 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "preview-dashboard"
+version = "0.1.0"
+description = "Private, one-way preview dashboard: Claude publishes content via MCP; owner views/trashes/restores over Tailscale."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [{ name = "Preview Dashboard contributors" }]
+classifiers = [
+    "Private :: Do Not Upload",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "httpx>=0.27",
+    "python-multipart>=0.0.18",
+    "mcp>=2.2,<3",
+]
+
+[project.optional-dependencies]
+# Claudia voice replies (unit M10). piper-tts is GPL-3.0: a runtime
+# dependency installed on the host only, never vendored into this repo.
+# Upper bounds: a new major (model/API format) is a reviewed upgrade, not a
+# side effect of `uv lock`. CI audits this extra too (voice-4).
+claudia-voice = [
+    "piper-tts>=1.3,<2",
+    "soundfile>=0.12,<1",
+    "numpy>=1.26,<3",
+]
+
+[project.scripts]
+preview-dashboard = "preview_dashboard.interfaces.cli:main"
+preview-dashboard-mcp = "preview_dashboard.interfaces.mcp.server:main"
+# Claudia's PreToolUse hook (C59, C60); path fixed in deploy/claudia/settings.json.
+preview-dashboard-claudia-hook = "preview_dashboard.interfaces.claudia.hook:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "bandit>=1.7.10",
+    "pip-audit>=2.7",
+    "hypothesis>=6.115",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/preview_dashboard"]
+
+# --- ruff -------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "N", "ANN",
+    # Trojan-source defense: bidi controls and invisible/control chars in
+    # source are errors (RUF001-RUF003 above cover confusable characters).
+    "PLE2502", "PLE2510", "PLE2512", "PLE2513", "PLE2514", "PLE2515",
+]
+# ANN101/ANN102 (self/cls annotations) were removed upstream; keep the
+# ignore list minimal and scoped to what tests legitimately need.
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+# Tests use bare asserts (S101) and don't need full annotation coverage (ANN).
+"tests/**/*.py" = ["S101", "ANN"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["preview_dashboard", "scripts"]
+
+# --- mypy ---------------------------------------------------------------
+[tool.mypy]
+files = ["src", "tests", "scripts"]
+python_version = "3.12"
+strict = true
+warn_unused_configs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# Test modules favor readability over exhaustive annotations; strict
+# elsewhere (src/) is what actually guards the shipped code.
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_untyped_decorators = false
+
+# --- pytest ---------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers --strict-config"
+markers = [
+    "unit: pure-logic tests with in-memory fakes",
+    "integration: tests against real adapters (tmp dirs, sqlite files)",
+    "security: one test per control in docs/security.md",
+    "e2e: end-to-end tests across processes",
+]
+asyncio_mode = "auto"
+
+# --- bandit ---------------------------------------------------------------
+[tool.bandit]
+exclude_dirs = ["tests"]

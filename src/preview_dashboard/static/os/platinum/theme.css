@@ -1,0 +1,129 @@
+/*
+  os/platinum/theme.css — the Platinum OS's design tokens (colors, type, spacing, bevels, patterns):
+  "Platinum 1998" in Sage & stone colours (design prototype 07). Token contract: docs/frontend.md
+  #theme-tokens; OS rules: docs/frontend-os.md. Platinum is the default OS, so its token block also
+  matches bare :root - the fallback when no OS applies, and the tokens inlined into /r/ pages.
+  Light only by design. Fonts come from fonts.css (dashboard only; /r/ pages fall back to system).
+*/
+
+:root,
+:root[data-os="platinum"] {
+  color-scheme: light;
+
+  /* Surfaces: sage desktop, platinum windows, white document insets */
+  --color-bg: #8b9484;
+  --color-desktop-dot: #808a79;
+  --color-window: #e2e0dc;
+  --color-window-shade: #c4c2be;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #f0f0f0;
+  --color-media-bg: #000000;
+  --color-overlay: rgb(30 34 30 / 0.45);
+
+  /* Lines and bevels */
+  --color-border: #bbbbbb;
+  --color-border-strong: #444444;
+  --color-rule: #e4e4e4;
+  --color-bevel-light: #ffffff;
+  --color-bevel-dark: #888888;
+  --border-width: 1px;
+
+  /* Text */
+  --color-text: #1c1c1c;
+  --color-text-muted: #4a4a4a;
+
+  /* Accent: the selection highlight */
+  --color-accent: #5b7262;
+  --color-accent-hover: #4a5e50;
+  --color-accent-contrast: #ffffff;
+  --color-accent-soft: #dfe5dc;
+  --color-focus: #3d4f42;
+
+  /* States (balloon-help yellow for notices) */
+  --color-danger: #9a4540;
+  --color-danger-hover: #7f3733;
+  --color-danger-contrast: #ffffff;
+  --color-warning-soft: #f7f3dc;
+  --color-warning-text: #6b5020;
+  --color-success: #4f7d5a; /* positive state (e.g. added lines, ok badges); white text needs >= 4.5 */
+
+  /* Typography: pixel face for chrome, a clean sans for list and body text */
+  --font-chrome: "Pixelify Sans", "Chicago", "Charcoal", "Geneva", system-ui, sans-serif;
+  --font-body: "Public Sans", "Geneva", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  --font-size-xs: 0.6875rem;
+  --font-size-sm: 0.8125rem;
+  --font-size-base: 0.875rem;
+  --font-size-lg: 0.9375rem;
+  --font-size-xl: 1.0625rem;
+  --font-size-2xl: 1.25rem;
+  /* Form controls on touch screens: 16px keeps iOS Safari from zooming on focus. */
+  --font-size-control: 1rem;
+  --font-weight-regular: 400;
+  --font-weight-medium: 600;
+  --font-weight-strong: 700;
+  --line-height-tight: 1.25;
+  --line-height-body: 1.45;
+  --letter-spacing-heading: 0;
+
+  /* Spacing scale (4px base) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  /* Shape: square windows, softly rounded push buttons */
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  /* Elevation: hard offset shadows, no blur */
+  --shadow-raised: 2px 2px 0 rgb(0 0 0 / 0.35);
+  --shadow-overlay: 3px 3px 0 rgb(0 0 0 / 0.45);
+  --bevel-raised: inset 1px 1px 0 var(--color-bevel-light), inset -1px -1px 0 var(--color-bevel-dark);
+  --bevel-pressed: inset 1px 1px 0 var(--color-bevel-dark), inset -1px -1px 0 var(--color-bevel-light);
+  --bevel-sunken: inset 1px 1px 0 var(--color-bevel-dark);
+  /* Default-button ring: a gap in window colour, then a thick black rounded ring. */
+  --ring-default: 0 0 0 2px var(--color-window), 0 0 0 5px var(--color-text);
+
+  /* Patterns: the two-colour desktop weave (title-bar pinstripes are private to chrome.css) */
+  --desktop-pattern:
+    radial-gradient(var(--color-desktop-dot) 1px, transparent 1.5px),
+    radial-gradient(var(--color-desktop-dot) 1px, transparent 1.5px);
+  --desktop-pattern-size: 8px 8px;
+  --desktop-pattern-position: 0 0, 4px 4px;
+
+  /* Icons: the sprite's recolourable fills (index.html, classes ic-*); pixel outlines stay black */
+  --icon-accent: #5b7262;
+  --icon-folder: #b4c4b0;
+  --icon-folder-tab: #d3dccf;
+  --icon-folder-shade: #8fa58f;
+
+  /* Motion: none in this theme (the owner wants every state still) */
+  --motion-duration: 0ms;
+  --motion-ease: linear;
+
+  /* Layout */
+  --desktop-max-width: 90rem;
+  --content-max-width: 60rem;
+  --reading-max-width: 46rem;
+  --desk-icons-width: 6rem;
+  --icon-size-sm: 16px;
+  --icon-size: 32px;
+  --icon-size-lg: 48px;
+  --tap-target: 44px;
+  --focus-ring-width: 2px;
+  --topbar-height: 1.75rem;
+  --titlebar-height: 1.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root,
+  :root[data-os="platinum"] {
+    --motion-duration: 0ms;
+  }
+}

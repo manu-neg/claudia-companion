@@ -1,0 +1,63 @@
+/*
+  os/shell.css - OS-neutral styles of the shared shell-bar drop-downs (os/shell-menu.js: the
+  Background and OS pickers): a trigger sized like a menu-bar title and a radio menu dropped
+  under it. Contract tokens only, like app.css; each OS adds its signature in its chrome.css.
+*/
+
+/* Positioning context: keeps the popup a drop under its trigger instead of pinned to a
+   viewport corner; stretches like any other shell-bar item. */
+.shell-menu-anchor {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+.shell-menu-trigger {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  cursor: default;
+}
+
+.shell-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 9000;
+  margin: 0;
+  padding: var(--space-1) 0;
+  list-style: none;
+  background: var(--color-window);
+  border: var(--border-width) solid var(--color-border-strong);
+  font-family: var(--font-chrome);
+  font-size: var(--font-size-sm);
+  max-width: calc(100vw - var(--space-4));
+}
+
+.shell-menu[hidden] {
+  display: none;
+}
+
+.shell-menu-option {
+  display: block;
+  width: 100%;
+  min-height: var(--tap-target);
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.shell-menu-option:hover,
+.shell-menu-option:focus-visible {
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+  outline: none;
+}
+
+.shell-menu-option[aria-checked="true"]::before {
+  content: "\2713 ";
+}

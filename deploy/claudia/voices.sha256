@@ -1,0 +1,9 @@
+# deploy/claudia/voices.sha256 — pinned SHA-256 of the owner's Piper voices
+# (D13/V6: es_MX-claude-high, en_US-amy-medium; unit M10, C56).
+# Format: `<64 hex>  <file name>` (sha256sum -c). install.sh --voice-models
+# refuses until all four files below are pinned here: fill in the hashes of
+# the files you downloaded and checked (MODEL_CARD licence per voice), commit.
+# es_MX-claude-high.onnx
+# es_MX-claude-high.onnx.json
+# en_US-amy-medium.onnx
+# en_US-amy-medium.onnx.json

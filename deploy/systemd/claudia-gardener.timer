@@ -1,0 +1,18 @@
+# claudia-gardener.timer — runs claudia-gardener.service once a week
+# (Sunday early morning, C54). Persistent=true: a week missed while the
+# host was off runs once at the next boot; the randomized delay keeps it off
+# the hour (and away from the hourly purge run).
+
+[Unit]
+Description=Weekly trigger for the Claudia knowledge-base gardener
+Documentation=file:///opt/preview-dashboard/docs/operations.md
+
+[Timer]
+OnCalendar=Sun *-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=30min
+AccuracySec=5min
+Unit=claudia-gardener.service
+
+[Install]
+WantedBy=timers.target
