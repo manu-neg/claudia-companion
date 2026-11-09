@@ -22,6 +22,7 @@ from preview_dashboard.adapters.sqlite.claudia_db import connect_claudia as conn
 from preview_dashboard.adapters.sqlite.claudia_db import default_claudia_db_path as default_db_path
 from preview_dashboard.domain.approvals import (
     APPROVAL_TTL,
+    LEGACY_APPROVAL_TTL,
     ActionKind,
     ApprovalKind,
     ApprovalRequest,
@@ -140,11 +141,33 @@ def test_c46_tap_and_deny_race_first_wins(store: SqliteApprovalStore) -> None:
 # --- expiry ---------------------------------------------------------------------------------
 
 
-def test_c46_expires_600_seconds_after_creation() -> None:
+def test_fcl3_c46_new_requests_expire_24_hours_after_creation() -> None:
     request = make_approval(1)
-    assert request.expires_at - request.created_at == APPROVAL_TTL == timedelta(seconds=600)
-    with pytest.raises(ValidationError):
-        dataclasses.replace(request, expires_at=request.expires_at + timedelta(hours=1))
+    assert request.expires_at - request.created_at == APPROVAL_TTL == timedelta(hours=24)
+    # No other lifetime can be stored: not longer, not in between, not shorter.
+    for expires in (
+        request.expires_at + timedelta(hours=1),
+        request.created_at + timedelta(hours=1),
+        request.created_at + timedelta(seconds=599),
+    ):
+        with pytest.raises(ValidationError):
+            dataclasses.replace(request, expires_at=expires)
+
+
+def test_fcl3_c46_legacy_600_second_rows_still_validate_and_expire(
+    store: SqliteApprovalStore,
+) -> None:
+    # Rows stored before F-CL3 keep their 600 s lifetime; no migration rewrites them.
+    legacy = dataclasses.replace(make_approval(1), expires_at=T0 + LEGACY_APPROVAL_TTL)
+    assert legacy.expires_at - legacy.created_at == timedelta(seconds=600)
+    store.add(legacy)
+    assert store.get(legacy.id) == legacy
+    with pytest.raises(InvalidStateError, match="expired"):
+        legacy.tapped(T0 + timedelta(seconds=600))
+    assert store.list_expirable(T0 + timedelta(seconds=600)) == [legacy]
+    tapped = legacy.tapped(T0 + timedelta(seconds=1))
+    store.save(tapped, expected_updated_at=legacy.updated_at)
+    assert store.get(legacy.id).state is ApprovalState.TAPPED
 
 
 @pytest.mark.parametrize("step", ["tap", "approve", "consume", "deny"])

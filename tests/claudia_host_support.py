@@ -89,6 +89,8 @@ class FakeAdmin:
     health: list[str] = field(default_factory=list)
     refuse_replies: bool = False
     cancel_fails: bool = False
+    cancel_all_calls: int = 0
+    open_ids: list[str] = field(default_factory=list)  # what an all-windows cancel returns
 
     def unhandled(self, wait: float) -> Sequence[OwnerMessage]:
         out, self.inbox = self.inbox, []
@@ -110,6 +112,12 @@ class FakeAdmin:
             raise RuntimeError("admin down")
         self.cancelled_windows.append(window_id)
         return []
+
+    def cancel_all_open_approvals(self) -> list[str]:
+        if self.cancel_fails:
+            raise RuntimeError("admin down")
+        self.cancel_all_calls += 1
+        return list(self.open_ids)
 
     def report_health(self, screen: str) -> None:
         self.health.append(screen)
@@ -223,11 +231,19 @@ class FakeGate:
     """`RunGate` recording each run's window and covers; `active` while a run is open."""
 
     runs: list[tuple[str, tuple[ApprovalRequest, ...]]] = field(default_factory=list)
+    carried: list[bool] = field(default_factory=list)
     ended: int = 0
     active: bool = False
 
-    def begin_run(self, window_id: WindowId, covers: Iterable[ApprovalRequest] = ()) -> None:
+    def begin_run(
+        self,
+        window_id: WindowId,
+        covers: Iterable[ApprovalRequest] = (),
+        *,
+        carry_over: bool = False,
+    ) -> None:
         self.runs.append((window_id, tuple(covers)))
+        self.carried.append(carry_over)
         self.active = True
 
     def end_run(self) -> None:
@@ -476,6 +492,20 @@ def host_rig(
         flow=flow,
         **parts,  # type: ignore[arg-type]
     )
+
+
+def settle(rig: HostRig, rounds: int = 12) -> None:
+    """Drive the approvals poller and the worker's settle step until nothing is parked.
+
+    Production runs them on two threads (main.HostLoop); tests run them
+    in order. A round where nobody decided advances the fake clock by the
+    long-poll length (FakeApprovalAdmin).
+    """
+    for _ in range(rounds):
+        if not rig.flow.open_approvals():
+            return
+        for decided in rig.flow.poll_parked():
+            rig.host.settle_approval(decided)
 
 
 @dataclass

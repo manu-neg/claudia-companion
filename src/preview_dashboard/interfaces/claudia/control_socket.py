@@ -6,6 +6,11 @@ whose `SO_PEERCRED` uid is trusted (root), reads one JSON line per
 connection within 5 s and answers with the gate's decision. Oversized,
 malformed or slow requests are answered `deny` (or dropped, which the
 hook also turns into a deny). Never logs request content.
+
+F-CL3: the same socket carries the `request_approval` tool of the
+`claudia-kb` MCP server (`{"v": 1, "approval": {...}}`): the host's approval
+flow checks it against the run in progress and answers `pending` + id or
+`refused` + a fixed text. Peers are root only, like the hook.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ from collections.abc import Collection
 from pathlib import Path
 from typing import Final, Protocol
 
+from preview_dashboard.application.claudia.approval_flow import ToolAnswer
 from preview_dashboard.application.claudia.hook_gate import HookDecision, HookVerdict
 from preview_dashboard.interfaces.claudia.hook import (
     DEFAULT_SOCKET_PATH,
@@ -37,6 +43,8 @@ MAX_CONNECTIONS: Final = 16
 _BACKLOG: Final = 16
 _UNTRUSTED_DIR_BITS: Final = stat.S_IWGRP | stat.S_IWOTH
 _PEERCRED: Final = struct.Struct("3i")
+APPROVAL_KEYS: Final = frozenset({"action_kind", "action_target", "reason", "nonce"})
+_APPROVAL_FIELD_MAX: Final = 1024
 
 
 class Decider(Protocol):
@@ -45,6 +53,50 @@ class Decider(Protocol):
     def decide(self, raw: object) -> HookDecision:
         """Answer one forwarded hook call; never raises."""
         ...
+
+
+class ApprovalRequester(Protocol):
+    """What the server asks for `request_approval` (`ApprovalFlow`, F-CL3)."""
+
+    def request_from_tool(
+        self, action_kind: object, action_target: object, reason: object, nonce: object
+    ) -> ToolAnswer:
+        """Open a request for the run in progress, or refuse with a fixed text; never raises.
+
+        `nonce` must be the active run's token (F-CL3b).
+        """
+        ...
+
+
+def encode_tool_answer(answer: ToolAnswer) -> bytes:
+    """One reply line: `{"result": "pending", "id", "text"}` or `{"result": "refused", "text"}`."""
+    body: dict[str, str] = (
+        {"result": "pending", "id": answer.approval_id, "text": answer.text}
+        if answer.approval_id is not None
+        else {"result": "refused", "text": answer.text}
+    )
+    return (json.dumps(body, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+_REFUSED_MALFORMED: Final = encode_tool_answer(ToolAnswer(None, "refused: malformed request"))
+_REFUSED_OFF: Final = encode_tool_answer(
+    ToolAnswer(None, "refused: approvals are not available on this host")
+)
+
+
+def decode_approval(data: dict[str, object]) -> dict[str, object]:
+    """The `request_approval` arguments of a decoded request line, incl. the run `nonce`.
+
+    Raises:
+        ValueError: not exactly `action_kind`, `action_target`, `reason`, `nonce`
+            strings of at most 1024 chars each.
+    """
+    args = data.get("approval")
+    if not isinstance(args, dict) or set(args) != APPROVAL_KEYS:
+        raise ValueError("bad approval request")
+    if not all(isinstance(v, str) and len(v) <= _APPROVAL_FIELD_MAX for v in args.values()):
+        raise ValueError("bad approval request")
+    return args
 
 
 class ControlSocketError(RuntimeError):
@@ -83,6 +135,7 @@ class ControlSocketServer:
         path: socket path (the hook's fixed default).
         trusted_uids: peer uids served (root; tests pass their own).
         timeout: per-connection read budget in seconds.
+        approvals: answers `request_approval` (F-CL3); None refuses it.
     """
 
     def __init__(
@@ -92,8 +145,10 @@ class ControlSocketServer:
         *,
         trusted_uids: Collection[int] = (0,),
         timeout: float = TIMEOUT_SECONDS,
+        approvals: ApprovalRequester | None = None,
     ) -> None:
         self._gate = gate
+        self._approvals = approvals
         self._path = path
         self._trusted = frozenset(trusted_uids)
         self._timeout = timeout
@@ -219,16 +274,42 @@ class ControlSocketServer:
 
     def _answer(self, line: bytes) -> bytes:
         try:
+            data = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError, RecursionError):
+            return _DENY_MALFORMED
+        if isinstance(data, dict) and "approval" in data:
+            return self._approval(data)
+        try:
             call = decode_request(line)
         except (UnicodeDecodeError, ValueError, RecursionError):
             return _DENY_MALFORMED
         return encode_decision(self._gate.decide(call))
 
+    def _approval(self, data: dict[str, object]) -> bytes:
+        """F-CL3 `request_approval`: strict shape, then the flow decides (never raises)."""
+        if set(data) != {"v", "approval"} or data["v"] != PROTOCOL_VERSION:
+            return _REFUSED_MALFORMED
+        try:
+            args = decode_approval(data)
+        except ValueError:
+            return _REFUSED_MALFORMED
+        if self._approvals is None:
+            return _REFUSED_OFF
+        answer = self._approvals.request_from_tool(
+            args["action_kind"], args["action_target"], args["reason"], args["nonce"]
+        )
+        _log.info("request_approval: %s", "pending" if answer.pending else "refused")
+        return encode_tool_answer(answer)
+
 
 __all__ = [
+    "APPROVAL_KEYS",
+    "ApprovalRequester",
     "ControlSocketError",
     "ControlSocketServer",
     "Decider",
+    "decode_approval",
     "decode_request",
     "encode_decision",
+    "encode_tool_answer",
 ]

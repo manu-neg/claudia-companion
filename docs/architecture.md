@@ -70,7 +70,7 @@ src/preview_dashboard/
     notifications.py   MessageContent, DashboardLinks, Notification, DeliveryTask, DeliveryPayload, PendingTask (N1)
     folders.py         FolderId, Folder, folder-name rules, UNFILED filter sentinel (ADR 0027)
     owner_messages.py  M1 — OwnerMessage inbox entity, owner-sender check, code detection + redaction (ADR 0031, C44)
-    approvals.py       M1 — ApprovalRequest (bound action, ActionKind, 600 s expiry, CAS successor rule, resume turn) (C46)
+    approvals.py       M1 — ApprovalRequest (bound action, ActionKind, 24 h expiry (legacy 600 s rows valid), CAS successor rule, resume turn) (C46)
     screen_rules.py    M4a — screening parser `scan_message`, strict `parse_screen_output`, ModelRun (C48)
     query.py           ItemQuery (+ folder filter), Page, ordering rule, keyset cursors, reference paginate()
   ports/             DONE (unit 2) — typing.Protocol definitions
@@ -479,7 +479,7 @@ Interfaces receive a core, never adapters: `interfaces/admin/app.build_admin_app
 | Module | Responsibility |
 |---|---|
 | `application/inbox.py` | `InboxService` (owner re-check, re-redact, idempotent add, handled CAS), `ScreenHealthBoard` |
-| `application/approvals.py` | `ApprovalService`: create (secret scan; `flagged_message` text built from the stored message), tap, approve, consume, cancel / cancel_open (close-only, A1), lazy 600 s expiry; every step a store CAS |
+| `application/approvals.py` | `ApprovalService`: create (secret scan; `flagged_message` text built from the stored message), tap, approve, consume, cancel / cancel_open (close-only, A1), lazy expiry (24 h; legacy 600 s); every step a store CAS |
 | `application/approval_prompts.py` | `OutboxApprovalPrompts` (A1): one `approval` notification with `approval_id` + one SEND per channel; text = stored action text; the channel adds Approve/Deny `p:<id>:ok\|no` |
 | `application/stepup.py` | `StepUpService.submit_code`: owner only, duplicate update, lockout, one TAPPED request, RFC 6238 ±1 step, burn step before approving, wrong-code alert |
 | `application/replies.py` | `ReplyService` (policy, scan, 3/message + 120/hour budget) → `OutboxReplyQueue` (event `reply`, long-form outbox task) |
@@ -518,7 +518,7 @@ A parser hit or the forwarded flag makes every row `flagged`. Health: 0 failures
 
 ### Claudia host (unit M4b, C49–C52, C58)
 
-**TL;DR:** `interfaces/claudia/main.py` refuses to start with an API key set or unsafe settings, then a **poller** thread claims each inbox message (handled CAS) and runs `/stop` `/status` `/voice` at once, while a **worker** thread runs every other message through `ClaudiaHost`: screen → full or read-only tool set → `claude -p` turn (own process group, prompt on stdin; host rules + her persona appended) → transcript audit → reply. Long runs get fixed host progress pings ("👀 On it…", "⏳ Still working… N min"), cancelled before the reply (F-CL2, ADR 0040).
+**TL;DR:** `interfaces/claudia/main.py` refuses to start with an API key set or unsafe settings, then a **poller** thread claims each inbox message (handled CAS) and runs `/stop` `/status` `/voice` at once, while a **worker** thread runs every other message through `ClaudiaHost`: screen → full or read-only tool set → `claude -p` turn (own process group, prompt on stdin; host rules + her persona appended) → transcript audit → reply. Long runs get fixed host progress pings ("👀 On it…", "⏳ Still working… N min"), cancelled before the reply (F-CL2, ADR 0040). An **approvals** thread watches parked approval requests and queues their settle work for the worker (F-CL3, ADR 0041).
 
 | Module | Responsibility |
 |---|---|
@@ -576,11 +576,11 @@ Classifier rules (each has its own test in `tests/security/test_risky_hook.py`):
 
 Wrappers stripped first: `sudo`, `doas`, `pkexec`, `env`, `xargs`, `command`, `builtin`, `nice`, `ionice`, `timeout`, `stdbuf`, `exec`, `time`, `nohup`, `setsid`, `flock`, `chrt`, `taskset`, `unbuffer`, `busybox`, absolute paths, a leading `\`, assignments, keywords. Two different risky actions in one call → `unknown`; several `rm`s merge their path sets.
 
-**M5b wiring (done):** `gate = HookGate(peers≤2.5 s, DenialRecorder(audit_log), clock, realpath=os.path.realpath)`; `ControlSocketServer(gate).start()` at host start (dir `/run/claudia-host`, systemd `RuntimeDirectory` 0700; unsafe dir → exit 2); around **every** run `gate.begin_run(window.id, covers)` … `gate.end_run()` in a `finally` (also the recap run). Hook `session_id` must equal the window id (`--session-id` / `--resume`): **to verify at deploy** (live `claude` not run in development; C60 check). Tests: `tests/security/test_{risky,peer}_hook.py`, `tests/unit/test_shell_lex.py`.
+**M5b wiring (done; F-CL3 dropped the peer lookup):** `gate = HookGate(DenialRecorder(audit_log), clock, realpath=os.path.realpath)`; `ControlSocketServer(gate).start()` at host start (dir `/run/claudia-host`, systemd `RuntimeDirectory` 0700; unsafe dir → exit 2); around **every** run `gate.begin_run(window.id, covers)` … `gate.end_run()` in a `finally` (also the recap run). Hook `session_id` must equal the window id (`--session-id` / `--resume`): **to verify at deploy** (live `claude` not run in development; C60 check). Tests: `tests/security/test_{risky,peer}_hook.py`, `tests/unit/test_shell_lex.py`.
 
 ### Claudia approval flow (unit M5b, C46 resume, C55; ADR 0038)
 
-**TL;DR:** a full-set run that ends with the line `waiting for approval: <description>` makes the **host** open one request for the action the C59 hook **last denied in that run** (kind + target from the classifier, never from her words; text `<label>: <target> (<description>)`), long-poll it, consume it once approved and resume with the stored request's `resume_turn()` in a full run whose only cover is that approval. A denial in that run is a guard block: one `failed` alert, no re-run, action locked for the window (C55).
+**TL;DR:** a full-set run that ends with the line `waiting for approval: <description>` makes the **host** open one request for the action the C59 hook **last denied in that run** (kind + target from the classifier, never from her words; text `<label>: <target> (<description>)`), long-poll it (since F-CL3 parked and polled off the worker, see below), consume it once approved and resume with the stored request's `resume_turn()` in a full run whose only cover is that approval. A denial in that run is a guard block: one `failed` alert, no re-run, action locked for the window (C55).
 
 ```
 run ends "waiting for approval: …"
@@ -602,12 +602,45 @@ GET /approvals/{id}?wait=50 … until not PENDING/TAPPED (deadline = expiry + 5 
 | `application/claudia/approval_flow.py` | `parse_waiting_request` (last non-empty line only), `build_action_text` (structured head first, unsafe description dropped), `DenialRecorder` (`AuditLog` decorator in front of the gate's log; keeps the last `hook_deny` with a canonical kind + target per window, cleared at every run start), `ApprovalFlow` (`follow`, `status_line`, C55 locks per window, dropped on window close) |
 | `application/claudia/runs.py` | `ClaudiaHost`: `_run` wraps every run in `gate.begin_run/end_run`, commits the KB (`KbService.commit_run`) after it, passes approved peer sessions to `PeerAudit.audit_run`; `_reply_run` speaks the reply with `/voice` on (`VoiceComposer` → `POST /v1/claudia/voice`, text fallback); `/status` adds the open approval (kind, state, minutes left; never its text) |
 | `ports/claudia_host.py` | `ApprovalAdmin`, `RunGate`, `KbCommits`, `VoiceReplies`; `RunRequest.recap` |
-| `adapters/claudia_admin_client.py` | `request_approval` (409 → `ConflictError`, 400/413/422 → `ValidationError`, answer must be PENDING and match), `get_approval` (same id), `cancel_approval` (result code; `busy` retried), `cancel_open_approvals` (`{"window_id"}` body, parses `{"cancelled": [...]}`), `send_voice` |
+| `adapters/claudia_admin_client.py` | `request_approval` (409 → `ConflictError`, 400/413/422 → `ValidationError`, answer must be PENDING and match), `get_approval` (same id), `cancel_approval` (result code; `busy` retried), `cancel_open_approvals` (`{"window_id"}` body, parses `{"cancelled": [...]}`), `cancel_all_open_approvals` (`{}`: every window; host start, shutdown and `/stop`, F-CL3b), `send_voice` |
 | `interfaces/claudia/mcp_config.py` | `load_mcp_config` (root-owned, exactly `preview-dashboard` + `claudia-kb`, `python -I -m …kb_mcp --root <abs> --caller claudia [--viewer-gid N]`, no `env`), `write_recap_config` (0600, atomic) |
 | `interfaces/claudia/main.py` | `wire_host`: screen pipeline, gate + control socket, flow, `KbService(FsKbStore(kb root from the MCP config))`, voice (`<state_dir>/voices` present → Piper) |
 | `application/approvals_snapshot.py`, `adapters/approvals_snapshot.py` | admin side: `SnapshotOnChange` wraps the approval change events; every change rewrites `<data_dir>/claudia-view/pending-approvals.json` (0640, dir group, atomic; open + unexpired only; > 50 or any failure → file removed) in M8's format (`application/pending_approvals.py`) |
 
 Tests: `tests/security/test_approval_flow.py` (C46 resume, C55, gate/KB/voice wiring), `tests/security/test_approvals_snapshot.py`, `tests/security/test_claudia_wiring.py`.
+
+### Claudia unblock (unit F-CL3, ADR 0041)
+
+**TL;DR:** she can ask directly with `request_approval` (claudia-kb MCP server → host control socket → `ApprovalFlow.request_from_tool`); requests live 24 h and are **parked**, not waited on: a third host thread polls them and queues settle work for the worker, so she keeps chatting and an approval after the window closed resumes in the current or a new window with a carried cover. Peer messages need only the prefix; deny reasons say what to do.
+
+```
+her run ─ mcp__claudia-kb__request_approval(kind, target, reason)
+  kb_mcp (caller claudia only) ─ HostApprovals ─ root 0600 control socket {"v":1,"approval":{…,"nonce"}}
+    (nonce = CLAUDIA_RUN_NONCE: made per run by ClaudiaHost._run, set in the child env by the runner)
+    ControlSocketServer ─ ApprovalFlow.request_from_tool: run nonce, run + actionable, kind ∈ APPROVABLE_KINDS,
+      target normalized like the hook, reason 1–120 safe chars, 1 per turn, chain < 3, not C55-locked
+      → ApprovalAdmin.request_approval (same admin route + limits) → park → "pending <id>"
+approvals thread: HostLoop.watch_once → flow.poll_parked() (GET ?wait, deadline expiry + 5 s)
+  → queue _Settle(decided) → worker: ClaudiaHost.settle_approval (stale generation → dropped)
+    APPROVED → consume → run_resume_turn: current window or WindowTracker.open_for_resume
+      → gate.begin_run(window, (consumed,), carry_over=window ≠ asked window)
+host start / shutdown / /stop: ClaudiaHost.cancel_stranded_approvals / stop → cancel-open {} (all windows, F-CL3b)
+```
+
+| Module | F-CL3 change |
+|---|---|
+| `domain/approvals.py` | `APPROVAL_TTL` 24 h, `LEGACY_APPROVAL_TTL` 600 s, `APPROVAL_TTLS` (the only accepted lifetimes), `APPROVABLE_KINDS` |
+| `application/claudia/approval_flow.py` | `RunContext`, `ParkedApproval`, `ToolAnswer`; `begin_run/end_run`, `request_from_tool`, `poll_parked`, `settle`, `cancel_parked`, `open_approvals`; `status_line` → `approvals open: N (kind, state, expires in XhYYm)` |
+| `application/claudia/hook_gate.py` | `HookGate(audit, clock, *, realpath)` (no peer lookup); `begin_run(…, carry_over=False)`; C60 = prefix only; `needs_approval`, `REASON_UNKNOWN_ACTION`, `REASON_PATTERN` |
+| `application/claudia/runs.py` | `APPROVAL_TOOLS` (FULL only), host rules 4–6, `has_approvals`, `poll_approvals`, `settle_approval`, `run_resume_turn(… message_id, generation, chain)`; `/stop` cancels parked requests too |
+| `application/claudia/windows.py` | `WindowTracker.open_for_resume(generation)` (never past a halt or newer stop epoch) |
+| `application/approvals_snapshot.py` | panel lists PENDING + TAPPED only |
+| `interfaces/claudia/approval_tool.py` | `HostApprovals.request(kind, target, reason)` (socket owner/mode checked, fixed texts on failure) |
+| `interfaces/claudia/control_socket.py` | `ControlSocketServer(…, approvals=)`: strict `approval` line → `ApprovalRequester` |
+| `interfaces/claudia/kb_mcp.py` | `request_approval` tool registered for caller `claudia` only |
+| `interfaces/claudia/main.py` | `_Settle` work item, `HostLoop.watch_once`, `approvals` thread |
+
+Tests: `tests/security/test_claudia_unblock.py`, `test_peer_hook.py`, `test_peer_audit.py`, `test_approvals.py::test_fcl3_*`, `test_approvals_snapshot.py::test_fcl3_*`.
 
 ### Claudia gardener (unit M7, C54)
 

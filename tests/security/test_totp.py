@@ -507,8 +507,9 @@ def test_c47_lockout_persists_across_restarts(tmp_path):
     # Same data dir, new core: still locked.
     with claudia_app(tmp_path, write_secret=False) as rig, TestClient(rig.app) as client:
         assert _code(client, rig, rig.code(), 7) == "locked"
-        rig.clock.advance(timedelta(seconds=LOCKOUT_SECONDS))
-        # The old request expired meanwhile; a fresh one can be approved again.
+        # Past the lockout and the old request's 24 h lifetime (F-CL3): it expired
+        # meanwhile; a fresh one can be approved again.
+        rig.clock.advance(timedelta(seconds=LOCKOUT_SECONDS) + timedelta(hours=24))
         aid = _tapped(client, rig, window="223e4567-e89b-42d3-a456-426614174000")
         assert _code(client, rig, rig.code(), 8) == "accepted"
         assert _state(client, rig, aid) == "approved"

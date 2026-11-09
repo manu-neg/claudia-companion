@@ -78,7 +78,8 @@ class InboxHousekeeping:
     Attributes:
         messages: owner messages; any older than the retention are deleted.
         approvals: approval requests; any that expired before the cutoff
-            are deleted (each expires 600 s after creation, so all are done).
+            are deleted (each expires at most 24 h after creation, so all
+            are done).
         expire_due: `ApprovalService.expire_due` (marks overdue open requests
             EXPIRED, S-C1 S12), run first; None = skip that step.
         compact: WAL checkpoint (TRUNCATE) of the Claudia database, run when

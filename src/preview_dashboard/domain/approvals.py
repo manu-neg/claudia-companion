@@ -3,7 +3,8 @@
 Holds `ApprovalId`, `WindowId`, `ApprovalKind`, `ActionKind`,
 `ApprovalState` and `ApprovalRequest`: a request is bound to one action
 (immutable text plus a structured `action_kind` + `action_target` the
-risky-action hook matches on), single use and expires 600 s after creation.
+risky-action hook matches on), single use and expires 24 h after creation
+(rows stored before F-CL3 keep their 600 s lifetime, ADR 0041).
 Transitions return new instances and check expiry; `check_successor` is the
 rule every store applies inside its compare-and-swap, so no writer can skip
 a step (e.g. PENDING straight to APPROVED) or edit the bound action.
@@ -31,8 +32,13 @@ ApprovalId = NewType("ApprovalId", str)
 WindowId = NewType("WindowId", str)
 """Claudia window (Claude session) id: a host-generated, canonical lowercase UUID (C51)."""
 
-# Owner design (plan §4, C46): an approval is only good for ~10 minutes.
-APPROVAL_TTL = timedelta(seconds=600)
+# Owner decision 2026-11-09 (F-CL3, ADR 0041): a request waits up to 24 h for the
+# owner, so a step asked late in the evening can still be approved the next day.
+APPROVAL_TTL = timedelta(hours=24)
+# Rows created before F-CL3 expire 600 s after creation; they stay valid as stored
+# (no data migration). Only these two lifetimes exist: a store can't widen one.
+LEGACY_APPROVAL_TTL = timedelta(seconds=600)
+APPROVAL_TTLS = frozenset({LEGACY_APPROVAL_TTL, APPROVAL_TTL})
 ACTION_TEXT_MAX_CHARS = 200
 ACTION_TARGET_MAX_CHARS = 200
 FLAGGED_EXCERPT_MAX_CHARS = 80
@@ -90,6 +96,20 @@ class ActionKind(StrEnum):
     DASHBOARD_DELETE = "dashboard_delete"
     SETTINGS_EDIT = "settings_edit"
     PEER_MESSAGE = "peer_message"
+
+
+# The kinds Claudia may ask for with `request_approval` (F-CL3, C46). `peer_message`
+# stays canonical for stored rows but is no longer needed (C60, ADR 0041).
+APPROVABLE_KINDS = frozenset(
+    {
+        ActionKind.PR_MERGE,
+        ActionKind.DEPLOY,
+        ActionKind.GIT_PUSH_MAIN,
+        ActionKind.RM,
+        ActionKind.DASHBOARD_DELETE,
+        ActionKind.SETTINGS_EDIT,
+    }
+)
 
 
 class ApprovalState(StrEnum):
@@ -211,7 +231,8 @@ class ApprovalRequest:
       target; kind PEER_MESSAGE: `action_kind` PEER_MESSAGE plus a target;
       kind FLAGGED_MESSAGE: no structured action, `message_id` required and
       `action_text` starts with `flagged_message_prefix(message_id)`;
-    - `expires_at == created_at + 600 s`; `created_at <= tapped_at <=
+    - `expires_at - created_at` is 24 h (new requests) or 600 s (rows stored
+      before F-CL3); `created_at <= tapped_at <=
       approved_at <= resolved_at <= updated_at` for the stamps the state has;
       taps and approvals happen before `expires_at`, EXPIRED at or after it.
     """
@@ -271,8 +292,8 @@ class ApprovalRequest:
             value = getattr(self, name)
             if value is not None:
                 self._set(name, ensure_utc(value, name))
-        if self.expires_at != self.created_at + APPROVAL_TTL:
-            raise ValidationError("an approval request expires exactly 600 s after creation")
+        if self.expires_at - self.created_at not in APPROVAL_TTLS:
+            raise ValidationError("an approval request expires 24 h (or 600 s) after creation")
         state = self.state
         needs_tap = state in {ApprovalState.TAPPED, ApprovalState.APPROVED, ApprovalState.CONSUMED}
         needs_approval = state in {ApprovalState.APPROVED, ApprovalState.CONSUMED}
@@ -317,7 +338,7 @@ class ApprovalRequest:
         action_target: str | None = None,
         message_id: OwnerMessageId | None = None,
     ) -> ApprovalRequest:
-        """Create a PENDING request expiring 600 s after `now` (the only way to create one).
+        """Create a PENDING request expiring 24 h after `now` (the only way to create one).
 
         Raises:
             ValidationError: any invariant of the class.
@@ -522,7 +543,10 @@ def _enum[E: StrEnum](cls: type[E], raw: object, what: str) -> E:
 
 
 __all__ = [
+    "APPROVABLE_KINDS",
     "APPROVAL_TTL",
+    "APPROVAL_TTLS",
+    "LEGACY_APPROVAL_TTL",
     "ActionKind",
     "ApprovalId",
     "ApprovalKind",

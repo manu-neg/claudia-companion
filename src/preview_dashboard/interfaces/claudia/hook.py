@@ -46,7 +46,9 @@ FORWARDED_KEYS: Final = frozenset(
     {"command", "file_path", "notebook_path", "to", "message", "item_id", "keep"}
 )
 _TOP_KEYS: Final = ("session_id", "cwd", "hook_event_name", "tool_name")
-_REASON_RE: Final = re.compile(r"[A-Za-z0-9_ :,./()-]{1,160}")
+# Equal to `hook_gate.REASON_PATTERN` (test). F-CL3 widened it so a reason can quote
+# the peer prefix (`'`) and an exact target (`#`, `=`, shell quotes) for request_approval.
+_REASON_RE: Final = re.compile(r"[A-Za-z0-9_ :,./()#'=+@~-]{1,400}")
 # F-CL1: file content stays here; only whether it references the dashboard's
 # MCP server / CLI / venv / admin socket goes to the host. Equal to
 # `domain.dashboard_bypass.REFERENCE_PATTERN` (test): this module stays stdlib-only.

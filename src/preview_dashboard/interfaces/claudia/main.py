@@ -11,10 +11,12 @@ halt persisted in the state dir is read at start (the host starts halted). `buil
 wires the screen pipeline (C48), the hook gate + control socket (C59/C60),
 the approval flow (C46/C55), KB commits (C53), voice replies (C56), the
 persona loader and the host progress pings (F-CL2).
-Then two threads: the **poller** long-polls the inbox, claims each message
+Then three threads: the **poller** long-polls the inbox, claims each message
 (handled CAS: processed once) and runs `/stop` `/status` `/voice` at once
 (so `/stop` works while a run is busy); the **worker** runs everything
-else in order (`ClaudiaHost`) and closes idle windows between messages.
+else in order (`ClaudiaHost`) and closes idle windows between messages; the
+**approvals** thread watches parked approval requests (up to 24 h, F-CL3)
+and queues each decided one for the worker.
 Errors are logged by type name only.
 """
 
@@ -33,7 +35,6 @@ from pathlib import Path
 from typing import Final
 
 from preview_dashboard.adapters.claude_cli import (
-    HOOK_PEER_LOOKUP_TIMEOUT,
     ApiCredentialError,
     ClaudeAgentsDirectory,
     ClaudeCliConfig,
@@ -56,7 +57,11 @@ from preview_dashboard.adapters.kb_store import FsKbStore
 from preview_dashboard.adapters.piper_tts import PiperTextToSpeech
 from preview_dashboard.adapters.secret_scan import RegexSecretScanner
 from preview_dashboard.adapters.transcripts import JsonlTranscripts
-from preview_dashboard.application.claudia.approval_flow import ApprovalFlow, DenialRecorder
+from preview_dashboard.application.claudia.approval_flow import (
+    ApprovalFlow,
+    DenialRecorder,
+    ParkedApproval,
+)
 from preview_dashboard.application.claudia.audit import PeerAudit
 from preview_dashboard.application.claudia.hook_gate import HookGate
 from preview_dashboard.application.claudia.kb import KbService
@@ -221,6 +226,13 @@ class _Work:
     generation: int
 
 
+@dataclass(frozen=True, slots=True)
+class _Settle:
+    """A decided approval request, run on the worker in order with messages (F-CL3)."""
+
+    decided: ParkedApproval
+
+
 class HostLoop:
     """The poller + worker threads around `ClaudiaHost`.
 
@@ -246,7 +258,7 @@ class HostLoop:
         self._screen = screen
         self._poll_wait = poll_wait
         self._tick = tick_seconds
-        self._queue: queue.Queue[_Work] = queue.Queue()
+        self._queue: queue.Queue[_Work | _Settle] = queue.Queue()
         self._stop = threading.Event()
         self._reported: ScreenHealth | None = None
 
@@ -276,12 +288,25 @@ class HostLoop:
         except queue.Empty:
             self._host.tick()
             return False
-        if work.command is not None:
+        if isinstance(work, _Settle):
+            self._host.settle_approval(work.decided)
+        elif work.command is not None:
             if work.generation == self._host.generation:
                 self._host.command(work.command, work.message.id)
         else:
             self._host.handle_message(work.message, generation=work.generation)
         return True
+
+    def watch_once(self) -> int:
+        """One watch round over parked approval requests; queue the decided ones (F-CL3).
+
+        Waiting is off the worker, so a request can stay open for 24 h while
+        the owner keeps chatting; settling runs on the worker, in order.
+        """
+        decided = self._host.poll_approvals()
+        for entry in decided:
+            self._queue.put(_Settle(entry))
+        return len(decided)
 
     def _report_health(self) -> None:
         try:
@@ -309,9 +334,18 @@ class HostLoop:
 
     def run(self) -> bool:
         """Run both threads until `stop()`; False if one died (systemd restarts the host)."""
+        rounds: list[tuple[str, Callable[[], object]]] = [
+            ("poller", self.poll_once),
+            ("worker", self.work_once),
+        ]
+        if self._host.has_approvals:
+            # F-CL3b: requests parked by a previous process are lost; cancel them before
+            # any thread can open a new one, so they don't hold the open cap for 24 h.
+            self._host.cancel_stranded_approvals()
+            rounds.append(("approvals", self.watch_once))
         threads = [
             threading.Thread(target=self._loop, args=(n, f), name=f"claudia-{n}", daemon=True)
-            for n, f in (("poller", self.poll_once), ("worker", self.work_once))
+            for n, f in rounds
         ]
         for thread in threads:
             thread.start()
@@ -459,15 +493,7 @@ def wire_host(
     )
     # The gate's denies pass the recorder, so an approval names the classifier's action (C59).
     denials = DenialRecorder(audit_log)
-    gate = HookGate(
-        ClaudeAgentsDirectory(
-            config.claude_bin, environ, config.workdir, timeout=HOOK_PEER_LOOKUP_TIMEOUT
-        ),
-        denials,
-        clock,
-        realpath=os.path.realpath,
-    )
-    control = ControlSocketServer(gate, config.hook_socket, trusted_uids=trusted_uids)
+    gate = HookGate(denials, clock, realpath=os.path.realpath)
     alerts = ReplyAlerts(admin)
     screen = screen or ScreenPipeline(
         runner=HaikuScreenRunner(claude_bin=str(config.claude_bin), environ=environ),
@@ -475,6 +501,10 @@ def wire_host(
     )
     flow = ApprovalFlow(
         admin=admin, denials=denials, alerts=alerts, clock=clock, record=audit.record_approval
+    )
+    # F-CL3: the same root-only socket also carries `request_approval` (claudia-kb tool).
+    control = ControlSocketServer(
+        gate, config.hook_socket, trusted_uids=trusted_uids, approvals=flow
     )
     # The gardener's restore (`*.md` only) also undoes a failed host post-run commit (F-C2c).
     kb = KbService(

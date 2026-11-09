@@ -148,9 +148,9 @@ def test_c46_snapshot_lists_only_open_unexpired_requests(view_dir: Path) -> None
     store = InMemoryApprovalStore()
     old = action(1, clock)
     store.add(old)
-    clock.advance(timedelta(seconds=400))
+    clock.advance(timedelta(hours=23))
     store.add(action(2, clock))
-    clock.advance(timedelta(seconds=300))  # #1 is past its 600 s, #2 is not
+    clock.advance(timedelta(hours=2))  # #1 is past its 24 h, #2 is not
     data = build_snapshot(store.list_open(), clock.now())
     assert data is not None
     assert [e["id"] for e in json.loads(data)["approvals"]] == ["0" * 25 + "2"]
@@ -257,6 +257,74 @@ def test_c46_every_approval_change_rewrites_the_snapshot(view_dir: Path) -> None
     service.cancel(created.id)
     assert read_back(path, clock).approvals == ()
     assert events.notified >= 3  # long-polls still woken first
+
+
+def _service(store: InMemoryApprovalStore, path: Path, clock: FixedClock) -> ApprovalService:
+    class _Prompts:
+        def prompt(self, request: ApprovalRequest) -> None:
+            del request
+
+    return ApprovalService(
+        store=store,
+        messages=InMemoryOwnerMessageStore(),
+        clock=clock,
+        ids=SequentialIdGenerator(),
+        scanner=FakeContentScanner(),
+        prompts=_Prompts(),
+        events=SnapshotOnChange(FakeOutboxEvents(), writer(store, path, clock)),
+    )
+
+
+def _create(service: ApprovalService, n: int) -> ApprovalRequest:
+    return service.create(
+        ApprovalCreateCommand(
+            window_id=window(n),
+            kind="action",
+            action_text=f"Merge PR: o/r#{n}",
+            action_kind="pr_merge",
+            action_target=f"o/r#{n}",
+        )
+    )
+
+
+def test_fcl3_c46_panel_drops_a_24h_request_at_expiry_without_a_snapshot_rewrite(
+    view_dir: Path,
+) -> None:
+    # Owner requirement (F-CL3): listed until 24 h after creation, gone from then on,
+    # even though nothing rewrites the snapshot (the reader drops it by its own clock).
+    clock = FixedClock()
+    store = InMemoryApprovalStore()
+    path = view_dir / "pending-approvals.json"
+    created = _create(_service(store, path, clock), 1)
+    written = path.read_bytes()
+    clock.advance(timedelta(hours=23, minutes=59))
+    assert [a.id for a in read_back(path, clock).approvals] == [created.id]
+    clock.advance(timedelta(minutes=1))  # exactly 24 h after creation
+    assert path.read_bytes() == written  # no rewrite happened
+    assert read_back(path, clock).approvals == ()
+    assert read_back(path, clock).available
+
+
+def test_fcl3_c46_panel_drops_a_request_right_after_approve_deny_or_cancel(
+    view_dir: Path,
+) -> None:
+    clock = FixedClock()
+    store = InMemoryApprovalStore()
+    path = view_dir / "pending-approvals.json"
+    service = _service(store, path, clock)
+    approved, denied, cancelled = (_create(service, n) for n in (1, 2, 3))
+    assert len(read_back(path, clock).approvals) == 3
+    # Approve tap: still listed (the owner checks it here before sending the code).
+    service.tap(approved.id, TapDecision.APPROVE)
+    assert approved.id in {a.id for a in read_back(path, clock).approvals}
+    # Code verified (APPROVED): gone at once.
+    [tapped] = service.tapped_requests()
+    assert service.approve(tapped)
+    assert approved.id not in {a.id for a in read_back(path, clock).approvals}
+    service.tap(denied.id, TapDecision.DENY)
+    assert denied.id not in {a.id for a in read_back(path, clock).approvals}
+    service.cancel(cancelled.id)
+    assert read_back(path, clock).approvals == ()
 
 
 def test_default_snapshot_path_is_the_deploy_dir() -> None:

@@ -1,44 +1,53 @@
-"""Claudia's approval flow (ADR 0031; docs/security.md C46 resume, C55): ask, wait, consume, resume.
+"""Claudia's approval flow (ADR 0031, 0038, 0041; docs/security.md C46, C55): ask, park, resume.
 
-A run that ends with the line `waiting for approval: <description>` makes
-the host (never the model) open one approval request:
-- after a full-set turn, for the **last approvable action the C59/C60 hook
-  denied in that run** (`DenialRecorder` watches the gate's audit entries),
-  so `action_kind` + `action_target` are the classifier's, never the
-  model's; the shown text is host-built (`<kind label>: <target>`) with her
-  short description after it;
-- after a flagged / degraded (read-only) turn, a `flagged_message` request
-  for that inbox message (its text is built by the admin, C46).
-The host then long-polls until the owner decides. DENIED -> a read-only
-"denied" turn; APPROVED -> consume (single use) -> resume with the stored
-request's `resume_turn()` in a full-set run whose only cover is that
-approval. A permission denial in a run that held a CONSUMED action
-approval is a guard block (C55): one `failed` alert naming the step, no
-re-run, and the same action is refused for the rest of the window.
-Expired -> fixed text; cancelled (`/stop`) -> silence. Ports only.
+A request is opened by the host (never by the model's words alone) in two ways:
+- **reply line**: a run that ends with `waiting for approval: <description>`
+  asks, after a full-set turn, for the **last approvable action the C59/C60
+  hook denied in that run** (`DenialRecorder`), or after a flagged /
+  degraded (read-only) turn, a `flagged_message` request for that message;
+- **`request_approval` tool** (F-CL3): during a full-set turn she names a
+  canonical approvable kind + exact target + a short reason; the host
+  checks them (`request_from_tool`) and opens the same kind of request.
+The shown text is always host-built (`<kind label>: <target>`, her short
+words after it). A request lives up to 24 h, so the host never blocks its
+worker on it: it is **parked** and a separate poller (`poll_parked`) watches
+the admin; a decided request is handed back to the host's worker, which
+calls `settle`. DENIED -> a read-only "denied" turn; APPROVED -> consume
+(single use) -> resume with the stored request's `resume_turn()` in a
+full-set run whose only cover is that approval, in the request's window or,
+if that window closed meanwhile, in the current / a new one (carry-over). A
+permission denial in a run that held a CONSUMED action approval is a guard
+block (C55): one `failed` alert naming the step, no re-run, and the same
+action is refused for the rest of that window. Expired -> fixed text;
+cancelled (`/stop`) -> silence. Ports only.
 """
 
 from __future__ import annotations
 
+import hmac
 import logging
 import re
 import threading
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Final, Protocol
 
 from preview_dashboard.domain.approvals import (
+    APPROVABLE_KINDS,
     ActionKind,
+    ApprovalId,
     ApprovalKind,
     ApprovalRequest,
     ApprovalState,
     WindowId,
+    normalize_action_target,
     sanitize_action_text,
 )
 from preview_dashboard.domain.errors import ConflictError, DomainError, ValidationError
 from preview_dashboard.domain.owner_messages import OwnerMessageId
+from preview_dashboard.domain.text import reject_invisible
 from preview_dashboard.ports.claudia_host import (
     ApprovalAdmin,
     AuditLog,
@@ -53,11 +62,10 @@ _log = logging.getLogger(__name__)
 POLL_SECONDS: Final = 50.0
 MAX_CHAINED_APPROVALS: Final = 3
 DESCRIPTION_MAX_CHARS: Final = 120
-# Admin-side expiry is authoritative; this only bounds the host's wait.
+TARGET_INPUT_MAX_CHARS: Final = 400
+# Admin-side expiry is authoritative; this only bounds how long the host watches.
 _WAIT_MARGIN: Final = timedelta(seconds=5)
-_MAX_POLL_FAILURES: Final = 3
-_RETRY_PAUSE_SECONDS: Final = 5.0
-_MIN_POLL: Final = timedelta(seconds=1)
+_MIN_ROUND_SECONDS: Final = 1.0
 _HOOK_DENY_EVENT: Final = "hook_deny"
 _UNDECIDED: Final = frozenset({ApprovalState.PENDING, ApprovalState.TAPPED})
 # Markdown emphasis she may wrap the marker line in; nothing else is stripped.
@@ -78,6 +86,27 @@ OPEN_FAILED_TEXT: Final = "I couldn't open the approval request, so nothing was 
 EXPIRED_TEXT: Final = "The approval request expired, so nothing was run."
 NOT_USABLE_TEXT: Final = "The approval could no longer be used, so nothing was run."
 GUARD_BLOCK_TITLE: Final = "Claudia stopped a step blocked after approval: {action}"
+
+# `request_approval` answers (fixed texts; the tool returns them to her, F-CL3).
+TOOL_PENDING_TEXT: Final = (
+    "Approval request {id} is pending. Tell the owner in your reply what it is for and end "
+    "your turn; the host resumes you once they decide (it expires in 24 hours)."
+)
+TOOL_NO_RUN_TEXT: Final = "refused: no Claudia turn is running"  # also: wrong/missing run nonce
+TOOL_READ_ONLY_TEXT: Final = "refused: this turn is read-only, so it can't ask for an action"
+TOOL_ONE_PER_TURN_TEXT: Final = "refused: one approval request per turn"
+TOOL_CHAIN_TEXT: Final = "refused: too many approvals in a row for this message; ask the owner"
+TOOL_BAD_KIND_TEXT: Final = (
+    "refused: action_kind must be one of deploy, dashboard_delete, git_push_main, pr_merge, "
+    "rm, settings_edit"
+)
+TOOL_BAD_TARGET_TEXT: Final = (
+    "refused: action_target must be the exact target from the safety check's deny message"
+)
+TOOL_BAD_REASON_TEXT: Final = (
+    "refused: reason must be one short plain line (at most 120 characters, no links, "
+    "no invisible characters)"
+)
 
 _ACTION_LABELS: Final = {
     ActionKind.PR_MERGE: "Merge PR",
@@ -129,6 +158,13 @@ def readable_target(kind: ActionKind, target: str) -> str:
     return target
 
 
+def _action_head(kind: ActionKind, target: str) -> str | None:
+    try:
+        return sanitize_action_text(f"{_ACTION_LABELS[kind]}: {readable_target(kind, target)}")
+    except ValidationError:
+        return None
+
+
 def build_action_text(kind: ActionKind, target: str, description: str) -> str | None:
     """The shown action text: host-built `<label>: <target>` first, her description after.
 
@@ -137,10 +173,8 @@ def build_action_text(kind: ActionKind, target: str, description: str) -> str | 
     the text rules (link, resume look-alike, control chars) is dropped.
     None if even the structured part does not fit the 200-char rule.
     """
-    head = f"{_ACTION_LABELS[kind]}: {readable_target(kind, target)}"
-    try:
-        head = sanitize_action_text(head)
-    except ValidationError:
+    head = _action_head(kind, target)
+    if head is None:
         return None
     description = description[:DESCRIPTION_MAX_CHARS].strip()
     if not description:
@@ -149,6 +183,27 @@ def build_action_text(kind: ActionKind, target: str, description: str) -> str | 
         return sanitize_action_text(f"{head} ({description})")
     except ValidationError:
         return head
+
+
+def check_tool_reason(raw: object) -> str | None:
+    """Her `request_approval` reason if it is one short clean line, else None (F-CL3).
+
+    Strict, unlike the reply-line description (which is dropped when unsafe):
+    the tool says why it refused, so she can fix it. At most 120 chars, no
+    control / invisible / bidi chars (C35 policy), no link and no resume
+    look-alike (checked again on the whole text by `sanitize_action_text`).
+    """
+    if not isinstance(raw, str):
+        return None
+    reason = raw.strip()
+    if not 1 <= len(reason) <= DESCRIPTION_MAX_CHARS:
+        return None
+    try:
+        reject_invisible(reason, name="reason")
+        sanitize_action_text(reason)
+    except ValidationError:
+        return None
+    return reason
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,7 +265,7 @@ class DenialRecorder:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ApprovalAsk:
-    """What the host is about to request (all fields host-derived)."""
+    """What the host is about to request (all fields host-derived or host-checked)."""
 
     window_id: WindowId
     kind: ApprovalKind
@@ -220,9 +275,64 @@ class ApprovalAsk:
     message_id: OwnerMessageId | None
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RunContext:
+    """The run in progress, as the flow needs it for `request_approval` (F-CL3).
+
+    Attributes:
+        window_id: the run's window.
+        message_id: the owner message it answers (replies go there), if any.
+        actionable: full tool set (only then may she ask for an action).
+        generation: the host's `/stop` generation the run belongs to.
+        chain: approval round-trips already behind this owner message.
+        nonce: the run's random token (env of its `claude` child, read by the
+            `claudia-kb` MCP server); `request_approval` must present it. ""
+            = the run has none, so the tool is refused.
+    """
+
+    window_id: WindowId
+    message_id: OwnerMessageId | None
+    actionable: bool
+    generation: int
+    chain: int = 0
+    nonce: str = field(default="", repr=False)  # a secret: never in logs or reprs
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ParkedApproval:
+    """An open request the host watches until it is decided (24 h at most, F-CL3).
+
+    Attributes:
+        request: the request as last seen.
+        message_id: the owner message whose replies it continues.
+        generation: the `/stop` generation it was asked under (older -> dropped).
+        chain: its round-trip index for that message (0 = first ask).
+        gave_up: the host stopped watching at the deadline (treated as expired).
+    """
+
+    request: ApprovalRequest
+    message_id: OwnerMessageId | None
+    generation: int
+    chain: int
+    gave_up: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ToolAnswer:
+    """What `request_approval` returns to her: a pending id, or a fixed refusal text."""
+
+    approval_id: ApprovalId | None
+    text: str
+
+    @property
+    def pending(self) -> bool:
+        """True if a request was opened."""
+        return self.approval_id is not None
+
+
 @dataclass(frozen=True, slots=True)
 class OpenApproval:
-    """The request the host is waiting on (for `/status`; no action text)."""
+    """A request being waited on (for `/status`; no action text)."""
 
     kind: ApprovalKind
     action_kind: ActionKind | None
@@ -231,7 +341,7 @@ class OpenApproval:
 
 
 class TurnHooks(Protocol):
-    """What the flow needs from the host for one owner message."""
+    """What the flow needs from the host to settle one decided request."""
 
     def run_turn(
         self,
@@ -241,7 +351,7 @@ class TurnHooks(Protocol):
         covers: tuple[ApprovalRequest, ...],
         approved_sessions: tuple[str, ...],
     ) -> RunOutcome | None:
-        """Run one resume turn in the window; None if it did not run or `/stop` ended it."""
+        """Run one resume turn; None if it did not run or `/stop` ended it."""
         ...
 
     def reply_run(self, outcome: RunOutcome) -> str | None:
@@ -253,12 +363,20 @@ class TurnHooks(Protocol):
         ...
 
     def stopped(self) -> bool:
-        """True once `/stop` happened after this message started."""
+        """True once `/stop` happened after the request was asked."""
+        ...
+
+    def window(self) -> WindowId | None:
+        """The window the last resume turn ran in (a chained ask belongs to it)."""
         ...
 
 
 class ApprovalFlow:
-    """Runs the approval round-trips of one window's turns (C46, C55). Thread-safe for status.
+    """Opens, parks and settles approval requests (C46, C55). Thread-safe.
+
+    Three threads use it: the host's worker (runs, `follow`, `settle`), the
+    hook control socket (`request_from_tool`) and the approvals poller
+    (`poll_parked`); `/stop` (`cancel_parked`) comes from the poller of the inbox.
 
     Args:
         admin: the approval routes (`claudia` token).
@@ -266,8 +384,8 @@ class ApprovalFlow:
         alerts: fixed `failed` alerts.
         clock: source of "now".
         record: logs each request state to the audit log (C52), optional.
-        poll_seconds: long-poll length per wait round.
-        pause: sleep between retries after an admin error (tests inject a no-op).
+        poll_seconds: long-poll length per watch round.
+        pause: sleep after a round the admin answered at once (tests inject a no-op).
     """
 
     def __init__(
@@ -289,32 +407,48 @@ class ApprovalFlow:
         self._poll = poll_seconds
         self._pause = pause
         self._lock = threading.Lock()
-        self._open: ApprovalRequest | None = None
+        self._wake = threading.Condition(self._lock)
+        self._parked: dict[ApprovalId, ParkedApproval] = {}
+        self._run: RunContext | None = None
+        # Windows whose current run already opened a request with the tool.
+        self._tool_asked: set[WindowId] = set()
         # C55: action texts and kind+target keys locked per window after a guard block.
         self._locked: dict[str, set[str]] = {}
 
     # --- host hooks ----------------------------------------------------------------------
 
-    def begin_run(self, window_id: WindowId) -> None:
-        """Called before every run: the deny that names an ask must come from that run."""
-        self._denials.clear(window_id)
+    def begin_run(self, window_id: WindowId, context: RunContext | None = None) -> None:
+        """Called before every run: denies and tool asks must come from that run.
 
-    def open_approval(self) -> OpenApproval | None:
-        """The request being waited on, if any (`/status`)."""
+        `context` None (recap) means `request_approval` is refused during it.
+        """
+        self._denials.clear(window_id)
         with self._lock:
-            request = self._open
-        if request is None:
-            return None
-        return OpenApproval(request.kind, request.action_kind, request.state, request.expires_at)
+            self._tool_asked.discard(window_id)
+            self._run = context
+
+    def end_run(self) -> None:
+        """Called after every run: the tool has no run to ask for any more."""
+        with self._lock:
+            self._run = None
+
+    def open_approvals(self) -> list[OpenApproval]:
+        """The requests being watched, soonest expiry first (`/status`)."""
+        with self._lock:
+            parked = [p.request for p in self._parked.values()]
+        parked.sort(key=lambda r: (r.expires_at, r.id))
+        return [OpenApproval(r.kind, r.action_kind, r.state, r.expires_at) for r in parked]
 
     def status_line(self, now: datetime) -> str:
-        """`/status` line: count, kind, state, minutes left; never the action text (C58)."""
-        current = self.open_approval()
-        if current is None:
+        """`/status` line: count, then kind, state, time left of the soonest; never text (C58)."""
+        current = self.open_approvals()
+        if not current:
             return "approvals open: none"
-        kind = current.action_kind.value if current.action_kind is not None else current.kind.value
-        minutes = max(0, int((current.expires_at - now).total_seconds()) // 60)
-        return f"approvals open: 1 ({kind}, {current.state.value}, expires in {minutes} min)"
+        first = current[0]
+        kind = first.action_kind.value if first.action_kind is not None else first.kind.value
+        minutes = max(0, int((first.expires_at - now).total_seconds()) // 60)
+        left = f"{minutes // 60}h{minutes % 60:02d}m"
+        return f"approvals open: {len(current)} ({kind}, {first.state.value}, expires in {left})"
 
     def is_locked(self, window_id: WindowId, ask: ApprovalAsk) -> bool:
         """True if C55 locked this action in the window (same text or same kind + target)."""
@@ -323,11 +457,11 @@ class ApprovalFlow:
             return bool(keys & self._locked.get(window_id, set()))
 
     def forget_window(self, window_id: WindowId) -> None:
-        """Drop the window's C55 locks once it is closed (a new window starts clean)."""
+        """Drop the window's C55 locks once it is closed; parked requests stay (F-CL3)."""
         with self._lock:
             self._locked.pop(window_id, None)
 
-    # --- the flow ------------------------------------------------------------------------
+    # --- asking --------------------------------------------------------------------------
 
     def follow(
         self,
@@ -337,35 +471,35 @@ class ApprovalFlow:
         actionable: bool,
         message_id: OwnerMessageId | None,
         hooks: TurnHooks,
+        generation: int = 0,
+        chain: int = 0,
     ) -> None:
         """Handle `waiting for approval:` at the end of a run (after its reply was sent).
 
-        At most `MAX_CHAINED_APPROVALS` round-trips per owner message. Raises
-        nothing for admin failures (fixed texts instead); a bug propagates to
-        the host's per-message isolation.
+        Opens and parks the request; never waits. Ignored if the run already
+        asked with the tool, and past `MAX_CHAINED_APPROVALS` round-trips per
+        owner message. Raises nothing for admin failures (fixed texts instead).
         """
-        text = result_text
-        for _ in range(MAX_CHAINED_APPROVALS):
-            description = parse_waiting_request(text)
-            if description is None or hooks.stopped():
-                return
-            ask = self.ask_for(window_id, description, actionable=actionable, message_id=message_id)
-            if ask is None:
-                hooks.reply(NO_ACTION_SEEN_TEXT)
-                return
-            if self.is_locked(window_id, ask):
-                _log.warning("window %s: approval refused, action locked after a block", window_id)
-                hooks.reply(LOCKED_TEXT)
-                return
-            request = self._create(ask, hooks)
-            if request is None:
-                return
-            final = self._wait(request, hooks)
-            if final is None:
-                return
-            text = self._resolve(final, hooks)
-            # A resumed run used the full set: any further ask is an action ask.
-            actionable = True
+        with self._lock:
+            if window_id in self._tool_asked:
+                return  # the tool already opened this run's request
+        description = parse_waiting_request(result_text)
+        if description is None or hooks.stopped() or chain >= MAX_CHAINED_APPROVALS:
+            return
+        ask = self.ask_for(window_id, description, actionable=actionable, message_id=message_id)
+        if ask is None:
+            hooks.reply(NO_ACTION_SEEN_TEXT)
+            return
+        if self.is_locked(window_id, ask):
+            _log.warning("window %s: approval refused, action locked after a block", window_id)
+            hooks.reply(LOCKED_TEXT)
+            return
+        try:
+            request = self._create(ask)
+        except _RefusedError as refused:
+            hooks.reply(refused.text)
+            return
+        self._park(request, message_id=message_id, generation=generation, chain=chain)
 
     def ask_for(
         self,
@@ -411,76 +545,162 @@ class ApprovalFlow:
             message_id=message_id,
         )
 
-    # --- steps ---------------------------------------------------------------------------
+    def request_from_tool(
+        self, action_kind: object, action_target: object, reason: object, nonce: object
+    ) -> ToolAnswer:
+        """`request_approval` (F-CL3): open a request for the run in progress; never raises.
 
-    def _create(self, ask: ApprovalAsk, hooks: TurnHooks) -> ApprovalRequest | None:
+        Only for the caller that presents the run's own nonce (F-CL3b: the
+        MCP server of that run, not a stray process on the socket), in a
+        full-set run, once per run, for a canonical approvable kind
+        (never `unknown` or `peer_message`), an exact target (normalized like
+        the hook's) and a short clean reason. The text is host-built
+        (`<label>: <target> (<reason>)`); the admin applies the same checks,
+        budgets and one-open-per-window rule as for the reply-line path.
+        """
         try:
-            request = self._admin.request_approval(
-                window_id=ask.window_id,
-                kind=ask.kind,
-                action_text=ask.action_text,
-                action_kind=ask.action_kind,
-                action_target=ask.action_target,
-                message_id=ask.message_id,
-            )
-        except ConflictError:
-            hooks.reply(BUSY_TEXT)
-            return None
+            return self._tool_request(action_kind, action_target, reason, nonce)
+        except Exception as exc:  # a bug must not leave the socket thread hanging
+            _log.error("request_approval failed (%s)", type(exc).__name__)
+            return ToolAnswer(None, OPEN_FAILED_TEXT)
+
+    def _tool_request(
+        self, action_kind: object, action_target: object, reason: object, nonce: object
+    ) -> ToolAnswer:
+        with self._lock:
+            run = self._run
+            # Fail closed: no run, a run without a nonce, or a wrong/missing one -> same answer.
+            if run is None or not _nonce_matches(run.nonce, nonce):
+                return ToolAnswer(None, TOOL_NO_RUN_TEXT)
+            if not run.actionable:
+                return ToolAnswer(None, TOOL_READ_ONLY_TEXT)
+            if run.chain >= MAX_CHAINED_APPROVALS:
+                return ToolAnswer(None, TOOL_CHAIN_TEXT)
+            if run.window_id in self._tool_asked:
+                return ToolAnswer(None, TOOL_ONE_PER_TURN_TEXT)
+        kind = _approvable_kind(action_kind)
+        if kind is None:
+            return ToolAnswer(None, TOOL_BAD_KIND_TEXT)
+        target = _exact_target(action_target)
+        if target is None:
+            return ToolAnswer(None, TOOL_BAD_TARGET_TEXT)
+        head = _action_head(kind, target)
+        if head is None:
+            return ToolAnswer(None, TOOL_BAD_TARGET_TEXT)
+        description = check_tool_reason(reason)
+        if description is None:
+            return ToolAnswer(None, TOOL_BAD_REASON_TEXT)
+        try:
+            # The structured part first and whole (as for the reply line), then her words.
+            text = sanitize_action_text(f"{head} ({description})")
         except ValidationError:
-            hooks.reply(REFUSED_TEXT)
-            return None
-        except DomainError as exc:
-            _log.error("approval request failed (%s)", type(exc).__name__)
-            hooks.reply(OPEN_FAILED_TEXT)
-            return None
-        _log.info("approval %s requested (%s)", request.id, request.kind)
-        self._audit(request)
-        return request
-
-    def _wait(self, request: ApprovalRequest, hooks: TurnHooks) -> ApprovalRequest | None:
-        """Poll until decided; None if stopped / cancelled (silence) or given up (fixed text)."""
-        current = request
-        failures = 0
-        deadline = request.expires_at + _WAIT_MARGIN
-        self._set_open(current)
+            return ToolAnswer(None, TOOL_BAD_REASON_TEXT)
+        ask = ApprovalAsk(
+            window_id=run.window_id,
+            kind=ApprovalKind.ACTION,
+            action_text=text,
+            action_kind=kind,
+            action_target=target,
+            message_id=run.message_id,
+        )
+        if self.is_locked(run.window_id, ask):
+            return ToolAnswer(None, LOCKED_TEXT)
+        with self._lock:
+            # Reserve before the admin call: a second concurrent call gets "one per turn".
+            if self._run is not run or run.window_id in self._tool_asked:
+                return ToolAnswer(None, TOOL_ONE_PER_TURN_TEXT)
+            self._tool_asked.add(run.window_id)
         try:
-            while current.state in _UNDECIDED:
-                if hooks.stopped():
-                    self._cancel(current)
-                    return None
-                left = (deadline - self._clock.now()).total_seconds()
-                if left <= 0:
-                    self._cancel(current)
-                    hooks.reply(EXPIRED_TEXT)
-                    return None
-                started = self._clock.now()
-                try:
-                    current = self._admin.get_approval(
-                        current.id, wait=max(1.0, min(self._poll, left))
-                    )
-                    if current.state in _UNDECIDED and self._clock.now() - started < _MIN_POLL:
-                        # The admin answered at once (its waiter slots were full): don't spin.
-                        self._pause(_MIN_POLL.total_seconds())
-                except DomainError as exc:
-                    failures += 1
-                    _log.warning("approval poll failed (%s)", type(exc).__name__)
-                    if failures >= _MAX_POLL_FAILURES:
-                        self._cancel(current)
-                        hooks.reply(OPEN_FAILED_TEXT)
-                        return None
-                    self._pause(_RETRY_PAUSE_SECONDS)
-                    continue
-                failures = 0
-                self._set_open(current)
-        finally:
-            self._set_open(None)
-        self._audit(current)
-        if hooks.stopped() or current.state is ApprovalState.CANCELLED:
+            request = self._create(ask)
+        except _RefusedError as refused:
+            with self._lock:
+                self._tool_asked.discard(run.window_id)
+            return ToolAnswer(None, refused.text)
+        self._park(request, message_id=run.message_id, generation=run.generation, chain=run.chain)
+        return ToolAnswer(request.id, TOOL_PENDING_TEXT.format(id=request.id))
+
+    # --- watching ------------------------------------------------------------------------
+
+    def poll_parked(self) -> list[ParkedApproval]:
+        """One watch round over the parked requests; return the ones now decided.
+
+        Blocks up to `poll_seconds` when nothing is parked. Admin errors keep
+        a request parked (the 24 h deadline still ends it); past its expiry
+        (plus a margin) the host cancels it and returns it as `gave_up`.
+        Decided / given-up requests are unparked and audited.
+        """
+        with self._lock:
+            if not self._parked:
+                self._wake.wait(timeout=self._poll)
+            parked = list(self._parked.values())
+        if not parked:
+            return []
+        started = time.monotonic()
+        wait = max(_MIN_ROUND_SECONDS, self._poll / len(parked))
+        decided: list[ParkedApproval] = []
+        for entry in parked:
+            outcome = self._watch(entry, wait)
+            if outcome is not None:
+                decided.append(outcome)
+        if not decided and time.monotonic() - started < _MIN_ROUND_SECONDS:
+            self._pause(_MIN_ROUND_SECONDS)  # the admin answered at once: don't spin
+        return decided
+
+    def _watch(self, entry: ParkedApproval, wait: float) -> ParkedApproval | None:
+        request = entry.request
+        if self._clock.now() >= request.expires_at + _WAIT_MARGIN:
+            self._cancel(request)
+            return self._unpark(replace(entry, gave_up=True))
+        try:
+            current = self._admin.get_approval(request.id, wait=wait)
+        except DomainError as exc:
+            _log.warning("approval poll failed (%s)", type(exc).__name__)
             return None
-        if current.state is ApprovalState.EXPIRED:
+        if current.id != request.id:
+            _log.error("approval poll answered for another request; ignored")
+            return None
+        if current.state in _UNDECIDED:
+            with self._lock:
+                if request.id in self._parked:
+                    self._parked[request.id] = replace(entry, request=current)
+            return None
+        return self._unpark(replace(entry, request=current))
+
+    def cancel_parked(self) -> int:
+        """`/stop` (C58): cancel and forget every parked request, any window; return how many."""
+        with self._lock:
+            parked, self._parked = list(self._parked.values()), {}
+        for entry in parked:
+            self._cancel(entry.request)
+        return len(parked)
+
+    # --- settling ------------------------------------------------------------------------
+
+    def settle(self, decided: ParkedApproval, hooks: TurnHooks) -> None:
+        """Act on a decided request (host worker thread): resume, deny turn, or fixed text.
+
+        A resumed run may end with a new ask, which is parked as the next
+        round-trip of the same owner message.
+        """
+        request = decided.request
+        if hooks.stopped() or request.state is ApprovalState.CANCELLED:
+            return
+        if decided.gave_up or request.state is ApprovalState.EXPIRED:
             hooks.reply(EXPIRED_TEXT)
-            return None
-        return current
+            return
+        text = self._resolve(request, hooks)
+        window = hooks.window()
+        if text is None or window is None:
+            return
+        self.follow(
+            window,
+            text,
+            actionable=True,  # a resumed run used the full set
+            message_id=decided.message_id,
+            hooks=hooks,
+            generation=decided.generation,
+            chain=decided.chain + 1,
+        )
 
     def _resolve(self, decided: ApprovalRequest, hooks: TurnHooks) -> str | None:
         """Run the denied or approved turn; return her text if a further ask may follow."""
@@ -511,7 +731,7 @@ class ApprovalFlow:
         if outcome is None:
             return None
         if is_action and outcome.permission_denials > 0:
-            self._guard_block(consumed)
+            self._guard_block(consumed, hooks.window() or consumed.window_id)
             return None
         return hooks.reply_run(outcome)
 
@@ -534,26 +754,72 @@ class ApprovalFlow:
         self._audit(consumed)
         return consumed
 
-    def _guard_block(self, consumed: ApprovalRequest) -> None:
+    def _guard_block(self, consumed: ApprovalRequest, window_id: WindowId) -> None:
         """C55: the step ends here; never re-run, reworded, split or rerouted."""
         keys = self._keys(consumed.action_text, consumed.action_kind, consumed.action_target)
         with self._lock:
-            self._locked.setdefault(consumed.window_id, set()).update(keys)
+            # The window it was asked in and the one it ran in (they differ after carry-over).
+            for window in {consumed.window_id, window_id}:
+                self._locked.setdefault(window, set()).update(keys)
         _log.error("approval %s: run denied after consume; step stopped", consumed.id)
         self._alerts.failed(GUARD_BLOCK_TITLE.format(action=consumed.action_text))
 
     # --- helpers ---------------------------------------------------------------------------
 
+    def _create(self, ask: ApprovalAsk) -> ApprovalRequest:
+        """Open the request on the admin.
+
+        Raises:
+            _RefusedError: with the fixed text to show (busy, refused, failed).
+        """
+        try:
+            request = self._admin.request_approval(
+                window_id=ask.window_id,
+                kind=ask.kind,
+                action_text=ask.action_text,
+                action_kind=ask.action_kind,
+                action_target=ask.action_target,
+                message_id=ask.message_id,
+            )
+        except ConflictError:
+            raise _RefusedError(BUSY_TEXT) from None
+        except ValidationError:
+            raise _RefusedError(REFUSED_TEXT) from None
+        except DomainError as exc:
+            _log.error("approval request failed (%s)", type(exc).__name__)
+            raise _RefusedError(OPEN_FAILED_TEXT) from None
+        _log.info("approval %s requested (%s)", request.id, request.kind)
+        self._audit(request)
+        return request
+
+    def _park(
+        self,
+        request: ApprovalRequest,
+        *,
+        message_id: OwnerMessageId | None,
+        generation: int,
+        chain: int,
+    ) -> None:
+        entry = ParkedApproval(
+            request=request, message_id=message_id, generation=generation, chain=chain
+        )
+        with self._lock:
+            self._parked[request.id] = entry
+            self._wake.notify_all()
+
+    def _unpark(self, entry: ParkedApproval) -> ParkedApproval | None:
+        with self._lock:
+            if self._parked.pop(entry.request.id, None) is None:
+                return None  # `/stop` took it meanwhile: nothing to settle
+        self._audit(entry.request)
+        return entry
+
     def _cancel(self, request: ApprovalRequest) -> None:
         try:
             self._admin.cancel_approval(request.id)
         except DomainError as exc:
-            # It still expires on its own after 600 s.
+            # It still expires on its own (24 h, the admin checks it on every step).
             _log.warning("approval cancel failed (%s)", type(exc).__name__)
-
-    def _set_open(self, request: ApprovalRequest | None) -> None:
-        with self._lock:
-            self._open = request
 
     def _audit(self, request: ApprovalRequest) -> None:
         if self._record is None:
@@ -573,6 +839,40 @@ class ApprovalFlow:
         return keys
 
 
+class _RefusedError(Exception):
+    """Internal: the request was not opened; `text` is the fixed text to show."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(text)
+        self.text = text
+
+
+def _nonce_matches(expected: str, presented: object) -> bool:
+    """Constant-time compare; an empty expected nonce never matches (fail closed)."""
+    if not expected or not isinstance(presented, str):
+        return False
+    return hmac.compare_digest(expected.encode("utf-8"), presented.encode("utf-8"))
+
+
+def _approvable_kind(raw: object) -> ActionKind | None:
+    if not isinstance(raw, str):
+        return None
+    try:
+        kind = ActionKind(raw)
+    except ValueError:
+        return None  # `unknown` and anything else
+    return kind if kind in APPROVABLE_KINDS else None
+
+
+def _exact_target(raw: object) -> str | None:
+    if not isinstance(raw, str) or not raw or len(raw) > TARGET_INPUT_MAX_CHARS:
+        return None
+    try:
+        return normalize_action_target(raw)
+    except ValidationError:
+        return None
+
+
 __all__ = [
     "BUSY_TEXT",
     "EXPIRED_TEXT",
@@ -583,12 +883,24 @@ __all__ = [
     "NO_ACTION_SEEN_TEXT",
     "OPEN_FAILED_TEXT",
     "REFUSED_TEXT",
+    "TOOL_BAD_KIND_TEXT",
+    "TOOL_BAD_REASON_TEXT",
+    "TOOL_BAD_TARGET_TEXT",
+    "TOOL_CHAIN_TEXT",
+    "TOOL_NO_RUN_TEXT",
+    "TOOL_ONE_PER_TURN_TEXT",
+    "TOOL_PENDING_TEXT",
+    "TOOL_READ_ONLY_TEXT",
     "ApprovalAsk",
     "ApprovalFlow",
     "DenialRecorder",
     "DeniedAction",
     "OpenApproval",
+    "ParkedApproval",
+    "RunContext",
+    "ToolAnswer",
     "TurnHooks",
     "build_action_text",
+    "check_tool_reason",
     "parse_waiting_request",
 ]

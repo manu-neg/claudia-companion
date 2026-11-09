@@ -5,7 +5,7 @@ token creates PENDING requests, reads them, consumes APPROVED ones and
 cancels open ones (`/stop`, C58: cancel only ever closes a request); the
 notifier token records Approve/Deny taps; only `StepUpService` (after a
 verified TOTP code) moves TAPPED -> APPROVED. Every transition is the
-store's compare-and-swap, expiry (600 s) is checked first on every access,
+store's compare-and-swap, expiry (24 h; legacy rows 600 s) is checked first on every access,
 and unknown or malformed ids yield `unknown` (no existence oracle). Action
 text and target are secret-scanned like alert text (C35); a
 `flagged_message` text is always built here from the stored inbox message,
@@ -394,7 +394,7 @@ class ApprovalService:
         return request
 
     def get(self, approval_id: str) -> ApprovalRequest:
-        """Return a request (marked EXPIRED first if its 600 s are over).
+        """Return a request (marked EXPIRED first if its lifetime is over).
 
         Raises:
             NotFoundError: malformed or unknown id (same error: no oracle).
