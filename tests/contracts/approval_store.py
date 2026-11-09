@@ -319,13 +319,14 @@ class ApprovalStoreContract:
         assert aps.store.list_open(wid(3)) == []
         assert aps.store.list_expirable(T0) == []
         assert aps.store.list_expirable(first.expires_at) == [first]
-        assert aps.store.list_expirable(T0 + timedelta(hours=1)) == [first, second]
+        later = T0 + APPROVAL_TTL + timedelta(seconds=5)  # past both lifetimes (24 h)
+        assert aps.store.list_expirable(later) == [first, second]
 
     def test_delete_expired_before(self, aps: ApprovalStoreHandle) -> None:
         save_chain(aps.store, make_approval(1))
         aps.store.add(make_approval(2, window_id=wid(2), now=T0 + timedelta(days=1)))
         assert aps.store.delete_expired_before(T0 + APPROVAL_TTL) == 0  # strict
-        assert aps.store.delete_expired_before(T0 + timedelta(hours=1)) == 1
+        assert aps.store.delete_expired_before(T0 + APPROVAL_TTL + timedelta(hours=1)) == 1
         with pytest.raises(NotFoundError):
             aps.store.get(aid(1))
         assert aps.store.get(aid(2)).state is ApprovalState.PENDING
@@ -350,7 +351,7 @@ class ApprovalStoreContract:
             is None
         )
         assert aps.store.list_open() == [aps.store.get(aid(3))]
-        assert [r.id for r in aps.store.list_expirable(T0 + timedelta(hours=1))] == [aid(3)]
+        assert [r.id for r in aps.store.list_expirable(T0 + APPROVAL_TTL)] == [aid(3)]
         request = make_approval(2, window_id=wid(2))
         with pytest.raises(ValidationError):
             aps.store.save(request.tapped(T0), expected_updated_at=request.updated_at)

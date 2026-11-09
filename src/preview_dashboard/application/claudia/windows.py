@@ -214,6 +214,23 @@ class WindowTracker:
                 self._window = replace(self._window, last_message_at=now)
             return self._window
 
+    def open_for_resume(self, generation: int) -> Window | None:
+        """A window for an approval resume turn when none is open (F-CL3 carry-over).
+
+        Unlike `for_message` it never clears a `/stop` halt and is no owner
+        message (the idle clock starts now). None while halted or if a stop
+        came after `generation`.
+        """
+        now = self._clock.now()
+        with self._lock:
+            if self._halted or self._kb_halted or generation < self._halt_epoch:
+                return None
+            if self._window is None:
+                self._window = Window(
+                    id=self._ids.new_window_id(), opened_at=now, last_message_at=now
+                )
+            return self._window
+
     def mark_started(self, window_id: WindowId) -> None:
         """Record that the session of `window_id` exists (no-op if it is no longer current)."""
         with self._lock:

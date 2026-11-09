@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import IO, Final, Protocol
 
 from preview_dashboard.domain.approvals import WindowId, parse_window_id
-from preview_dashboard.ports.claudia_host import PeerInfo, RunOutcome, RunRequest
+from preview_dashboard.ports.claudia_host import RUN_NONCE_ENV, PeerInfo, RunOutcome, RunRequest
 
 _log = logging.getLogger(__name__)
 
@@ -67,8 +67,6 @@ KILL_GRACE_SECONDS: Final = 5.0
 # Bounded reap after SIGKILL: a stuck leader (D state) must not hang the host's worker.
 LEADER_REAP_SECONDS: Final = 10.0
 PEER_LOOKUP_TIMEOUT: Final = 10.0
-# The hook waits 5 s for the host (8 s alarm): its lookups must finish well inside that.
-HOOK_PEER_LOOKUP_TIMEOUT: Final = 2.5
 # Fail closed: only these `claude agents` kinds count as headless (verify on upgrades, V5).
 HEADLESS_KINDS: Final = frozenset({"background", "headless", "bg"})
 # Flag spellings that must never appear in a run argv (C51).
@@ -121,6 +119,27 @@ def child_env(environ: Mapping[str, str]) -> dict[str, str]:
     env = {name: environ[name] for name in (*ALLOWED_ENV, *_OPTIONAL_ENV) if name in environ}
     env.setdefault("PATH", DEFAULT_PATH)
     env.update(ISOLATION_ENV)
+    return env
+
+
+_RUN_NONCE_RE = re.compile(r"[0-9a-f]{16,64}")
+
+
+def run_env(base: Mapping[str, str], run_nonce: str) -> dict[str, str]:
+    """`base` (the allowlisted child env) plus this run's `RUN_NONCE_ENV`, if it has a nonce.
+
+    The MCP servers Claude Code starts for the run inherit it; the
+    `request_approval` tool presents it to the host (F-CL3b, C46). It is
+    set per run, so the pinned MCP config stays unchanged (C51).
+
+    Raises:
+        ValueError: a non-empty nonce that is not 16-64 lowercase hex chars.
+    """
+    env = dict(base)
+    if run_nonce:
+        if not _RUN_NONCE_RE.fullmatch(run_nonce):
+            raise ValueError("invalid run nonce")
+        env[RUN_NONCE_ENV] = run_nonce
     return env
 
 
@@ -525,6 +544,7 @@ class CliClaudeRunner:
             ValidationError, ValueError: a malformed request (see `build_run_argv`).
         """
         argv = build_run_argv(self._config, request)
+        env = run_env(self._env, request.run_nonce)
         with tempfile.TemporaryFile() as out:
             # Epoch check, spawn and pid registration under one lock shared with
             # kill_all (host-flow-2): a /stop either sees this group or this run
@@ -540,7 +560,7 @@ class CliClaudeRunner:
                         stdout=out,
                         stderr=subprocess.DEVNULL,  # may echo content: never captured or logged
                         cwd=self._config.workdir,
-                        env=self._env,
+                        env=env,
                         start_new_session=True,  # own process group for /stop (C58)
                         close_fds=True,
                     )
@@ -753,8 +773,7 @@ class ClaudeAgentsDirectory:
         environ: source environment (filtered by `child_env`).
         workdir: cwd of the lookup.
         headless_kinds: `kind` values that mean "not owner-attached".
-        timeout: seconds before a lookup gives up (then unknown -> interactive);
-            the hook gate's instance uses `HOOK_PEER_LOOKUP_TIMEOUT`.
+        timeout: seconds before a lookup gives up (then unknown -> interactive).
 
     Raises (constructor):
         ValueError: a non-positive timeout.

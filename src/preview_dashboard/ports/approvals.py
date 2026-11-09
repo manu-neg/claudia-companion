@@ -102,8 +102,9 @@ class ApprovalStore(Protocol):
     def delete_expired_before(self, cutoff: datetime) -> int:
         """Delete requests (any state) with `expires_at < cutoff`; return how many.
 
-        Every request expires 600 s after creation, so anything older than
-        the cutoff is long finished (housekeeping).
+        Every request expires at most 24 h after creation (legacy rows
+        600 s), so anything that expired before the cutoff is long finished
+        (housekeeping).
 
         Raises:
             ValidationError: `cutoff` is naive.

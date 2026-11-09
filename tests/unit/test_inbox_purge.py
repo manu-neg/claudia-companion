@@ -41,7 +41,8 @@ def test_old_messages_and_approvals_go_recent_ones_stay() -> None:
     messages, approvals = InMemoryOwnerMessageStore(), InMemoryApprovalStore()
     messages.add(make_message(1))
     messages.add(make_message(2, received_at=T0 + timedelta(days=2)))
-    approvals.add(make_approval(1))
+    # Approvals go once they expired before the cutoff (24 h after creation, F-CL3).
+    approvals.add(make_approval(1, now=T0 - timedelta(days=1)))
     approvals.add(make_approval(2, window_id=wid(2), now=T0 + timedelta(days=2)))
     compacted: list[int] = []
     report = _purge(InboxHousekeeping(messages=messages, approvals=approvals), compacted).run()

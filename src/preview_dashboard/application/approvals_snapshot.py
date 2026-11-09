@@ -4,7 +4,8 @@ On every approval change in the admin process (create, tap, approve,
 consume, cancel, expiry seen on read) `SnapshotOnChange` asks
 `ApprovalsSnapshotWriter` to rewrite one sanitized JSON file the viewer
 lists read-only (`application/pending_approvals.py`, unit M8, owns the
-format and the reader). Only open, unexpired requests are written, with
+format and the reader). Only PENDING and TAPPED (still waiting for the
+owner), unexpired requests are written, with
 id, action text, action kind, target, state and expiry: never the inbox
 message itself or any timestamp besides the expiry. For a flagged-message
 request the action text carries a sanitized excerpt of up to 80 characters
@@ -24,7 +25,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Final
 
-from preview_dashboard.domain.approvals import ApprovalRequest
+from preview_dashboard.domain.approvals import ApprovalRequest, ApprovalState
 from preview_dashboard.ports.approvals import ApprovalStore
 from preview_dashboard.ports.approvals_snapshot import ApprovalsSnapshotSink
 from preview_dashboard.ports.claudia import ChangeEvents
@@ -35,6 +36,7 @@ _log = logging.getLogger("preview_dashboard.approvals")
 # Must equal `application.pending_approvals` (a test keeps them equal).
 SNAPSHOT_VERSION: Final = 1
 MAX_ENTRIES: Final = 50
+_AWAITING_OWNER: Final = frozenset({ApprovalState.PENDING, ApprovalState.TAPPED})
 
 
 def snapshot_entry(request: ApprovalRequest) -> dict[str, object]:
@@ -56,8 +58,10 @@ def build_snapshot(requests: Iterable[ApprovalRequest], now: datetime) -> bytes 
         UTF-8 JSON, or None when there are more than `MAX_ENTRIES` (the
         reader would refuse it; the caller removes the file instead).
     """
+    # Only what still waits for the owner (C46 "independent view"): an APPROVED
+    # request (code verified) leaves the panel at once, like a denied one (F-CL3).
     live = sorted(
-        (r for r in requests if r.state.is_open and not r.is_expired(now)),
+        (r for r in requests if r.state in _AWAITING_OWNER and not r.is_expired(now)),
         key=lambda r: (r.expires_at, r.id),
     )
     if len(live) > MAX_ENTRIES:

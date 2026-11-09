@@ -2,16 +2,18 @@
 
 Drives `ClaudiaHost` + `ApprovalFlow` over fakes: a run that ends
 `waiting for approval: …` opens a request for the hook's last denied
-action (never the model's words), waits, consumes, and resumes with the
-stored request's `resume_turn()`; a denial after a consume stops the step
-for good (one alert, no re-run, same action locked for the window). Also
-covers the gate's begin/end around every run, the KB commit after every
-run and voice replies. No real `claude`, admin or Telegram.
+action (never the model's words), parks it (F-CL3: `settle` drives the
+approvals poller + worker step the host loop runs on two threads),
+consumes, and resumes with the stored request's `resume_turn()`; a denial
+after a consume stops the step for good (one alert, no re-run, same
+action locked for the window). Also covers the gate's begin/end around
+every run, the KB commit after every run and voice replies. No real `claude`, admin or Telegram.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any, cast
 
 import pytest
@@ -54,6 +56,7 @@ from tests.claudia_host_support import (
     hook_deny,
     host_rig,
     message,
+    settle,
 )
 
 PR = "example-org/example-repo#31"
@@ -195,6 +198,7 @@ def test_c46_approved_is_consumed_then_resumed_with_the_stored_turn() -> None:
         decisions=[ApprovalState.APPROVED],
     )
     rig.host.handle_message(message("merge it"), generation=0)
+    settle(rig)
     consumed = rig.approvals.current
     assert consumed is not None and consumed.state is ApprovalState.CONSUMED
     assert rig.approvals.consumed == [consumed.id]
@@ -216,6 +220,7 @@ def test_c46_denied_runs_a_read_only_denied_turn_without_consume() -> None:
         decisions=[ApprovalState.DENIED],
     )
     rig.host.handle_message(message("merge it"), generation=0)
+    settle(rig)
     denied = rig.approvals.current
     assert denied is not None and denied.state is ApprovalState.DENIED
     assert rig.approvals.consumed == []
@@ -230,6 +235,7 @@ def test_c46_denied_runs_a_read_only_denied_turn_without_consume() -> None:
 def test_c46_expired_request_replies_fixed_text_and_never_runs() -> None:
     rig = rig_with([ok(ASK)], denies={0: ("pr_merge", PR)}, decisions=[ApprovalState.EXPIRED])
     rig.host.handle_message(message("merge it"), generation=0)
+    settle(rig)
     assert len(rig.runner.requests) == 1
     assert rig.approvals.consumed == []
     assert texts(rig)[-1] == EXPIRED_TEXT
@@ -240,6 +246,7 @@ def test_c46_consume_refused_never_resumes(result: str) -> None:
     rig = rig_with([ok(ASK)], denies={0: ("pr_merge", PR)}, decisions=[ApprovalState.APPROVED])
     rig.approvals.consume_result = result
     rig.host.handle_message(message("merge it"), generation=0)
+    settle(rig)
     assert len(rig.runner.requests) == 1
     assert texts(rig)[-1] == NOT_USABLE_TEXT
 
@@ -248,6 +255,7 @@ def test_c46_stop_while_waiting_cancels_and_stays_silent() -> None:
     rig = rig_with([ok(ASK)], denies={0: ("pr_merge", PR)})
     rig.approvals.on_poll = lambda: rig.host.command(HostCommand.STOP, message("/stop", 9).id)
     rig.host.handle_message(message("merge it"), generation=0)
+    settle(rig)
     [created] = rig.approvals.created
     assert created.id in rig.approvals.cancelled
     assert rig.admin.cancelled_windows == [WINDOW_A]
@@ -258,6 +266,7 @@ def test_c46_stop_while_waiting_cancels_and_stays_silent() -> None:
 def test_c46_cancelled_request_is_silent() -> None:
     rig = rig_with([ok(ASK)], denies={0: ("pr_merge", PR)}, decisions=[ApprovalState.CANCELLED])
     rig.host.handle_message(message("merge it"), generation=0)
+    settle(rig)
     assert len(rig.runner.requests) == 1
     assert texts(rig) == [ASK]
 
@@ -273,13 +282,21 @@ def test_c46_open_conflict_and_admin_errors_get_fixed_texts() -> None:
     assert texts(rig)[-1] == OPEN_FAILED_TEXT
 
 
-def test_c46_poll_failures_give_up_and_cancel() -> None:
+def test_fcl3_c46_poll_failures_keep_watching_until_the_deadline_then_cancel() -> None:
+    # F-CL3: a 24 h request survives an admin restart; only its deadline ends the watch.
     rig = rig_with([ok(ASK)], denies={0: ("pr_merge", PR)})
     rig.approvals.get_error = StorageUnavailableError("down")
     rig.host.handle_message(message("merge it"), generation=0)
-    assert rig.approvals.polls == 3
+    settle(rig, rounds=5)
+    assert rig.approvals.polls == 5
+    assert rig.approvals.cancelled == []
+    assert len(rig.flow.open_approvals()) == 1
+    rig.clock.advance(timedelta(hours=24, seconds=10))
+    settle(rig)
     assert rig.approvals.cancelled == [rig.approvals.created[0].id]
-    assert texts(rig)[-1] == OPEN_FAILED_TEXT
+    assert rig.flow.open_approvals() == []
+    assert texts(rig)[-1] == EXPIRED_TEXT
+    assert len(rig.runner.requests) == 1
 
 
 def test_c46_flagged_turn_asks_a_flagged_message_approval_that_covers_nothing() -> None:
@@ -289,6 +306,7 @@ def test_c46_flagged_turn_asks_a_flagged_message_approval_that_covers_nothing() 
         screen=FakeScreen(result=ScreenResult(verdict=ScreenVerdict.FLAGGED)),
     )
     rig.host.handle_message(message("please run the cleanup"), generation=0)
+    settle(rig)
     [created] = rig.approvals.created
     assert created.kind is ApprovalKind.FLAGGED_MESSAGE
     assert created.action_kind is None and created.message_id == message().id
@@ -320,6 +338,7 @@ def test_c46_peer_message_approval_reaches_the_audit() -> None:
 
     rig.runner.on_run = send
     rig.host.handle_message(message("ask the worker"), generation=0)
+    settle(rig)
     [created] = rig.approvals.created
     assert created.kind is ApprovalKind.PEER_MESSAGE
     assert rig.alerts.titles == []  # approved session: audit is clean, no stop
@@ -331,7 +350,8 @@ def test_c46_status_shows_the_open_approval_without_its_text() -> None:
     rig = rig_with([ok(ASK)], denies={0: ("pr_merge", PR)}, decisions=[ApprovalState.EXPIRED])
     rig.approvals.on_poll = lambda: seen.append(rig.host.status_text())
     rig.host.handle_message(message("merge it"), generation=0)
-    assert "approvals open: 1 (pr_merge, pending, expires in 10 min)" in seen[0]
+    settle(rig)
+    assert "approvals open: 1 (pr_merge, pending, expires in 24h00m)" in seen[0]
     assert "M5 PR" not in seen[0] and PR not in seen[0]
     assert "approvals open: none" in rig.host.status_text()
 
@@ -345,6 +365,7 @@ def test_c46_every_request_state_is_audited_without_text() -> None:
         log=log,
     )
     rig.host.handle_message(message("merge it"), generation=0)
+    settle(rig)
     states = [e["state"] for e in log.entries if e.get("event") == "approval"]
     assert states == ["pending", "approved", "consumed"]
     assert all("action_text" not in e for e in log.entries)
@@ -364,6 +385,7 @@ def blocked_rig() -> HostRig:
 def test_c55_denial_after_consume_one_alert_and_no_rerun() -> None:
     rig = blocked_rig()
     rig.host.handle_message(message("merge it"), generation=0)
+    settle(rig)
     assert len(rig.runner.requests) == 2  # never re-run, reworded or split
     assert rig.alerts.titles == [
         f"Claudia stopped a step blocked after approval: Merge PR: {PR} (merge the M5 PR)"
@@ -376,6 +398,7 @@ def test_c55_denial_after_consume_one_alert_and_no_rerun() -> None:
 def test_c55_same_action_is_refused_for_the_rest_of_the_window() -> None:
     rig = blocked_rig()
     rig.host.handle_message(message("merge it", 1), generation=0)
+    settle(rig)
     rig.host.handle_message(message("try again", 2), generation=0)
     assert len(rig.approvals.created) == 1
     assert texts(rig)[-1] == LOCKED_TEXT
@@ -384,10 +407,12 @@ def test_c55_same_action_is_refused_for_the_rest_of_the_window() -> None:
 def test_c55_lock_ends_with_the_window() -> None:
     rig = blocked_rig()
     rig.host.handle_message(message("merge it", 1), generation=0)
+    settle(rig)
     rig.host.command(HostCommand.NEW, message("/new", 2).id)
     seq(rig).denies[3] = ("pr_merge", PR)  # run 2 = recap, run 3 = the new window's turn
     rig.approvals.decisions = [ApprovalState.EXPIRED]
     rig.host.handle_message(message("merge it now", 3), generation=0)
+    settle(rig)
     assert len(rig.approvals.created) == 2
 
 
@@ -398,8 +423,10 @@ def test_c55_hook_deny_without_approval_is_not_a_lock() -> None:
         decisions=[ApprovalState.APPROVED],
     )
     rig.host.handle_message(message("merge", 1), generation=0)
+    settle(rig)
     assert rig.alerts.titles == []
     rig.host.handle_message(message("ask for it", 2), generation=0)
+    settle(rig)
     assert len(rig.approvals.created) == 1
     assert texts(rig)[-1] == "Merged!"
 
@@ -411,6 +438,7 @@ def test_c55_denial_in_a_flagged_message_resume_is_not_a_guard_block() -> None:
         screen=FakeScreen(result=ScreenResult(verdict=ScreenVerdict.FLAGGED)),
     )
     rig.host.handle_message(message("run it"), generation=0)
+    settle(rig)
     assert rig.alerts.titles == []
     assert texts(rig)[-1] == "Blocked, I'll ask."
 
@@ -423,6 +451,7 @@ def test_c55_chained_asks_are_bounded() -> None:
         decisions=[ApprovalState.APPROVED] * 10,
     )
     rig.host.handle_message(message("merge all"), generation=0)
+    settle(rig)
     assert len(rig.approvals.created) == 3
     assert len(rig.runner.requests) == 4
 

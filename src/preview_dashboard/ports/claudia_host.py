@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Final, Protocol
 
 from preview_dashboard.domain.approvals import (
     ActionKind,
@@ -23,6 +23,10 @@ from preview_dashboard.domain.approvals import (
 )
 from preview_dashboard.domain.errors import InvalidStateError
 from preview_dashboard.domain.owner_messages import OwnerMessage, OwnerMessageId
+
+# Env var the runner sets in a run's child env and the `claudia-kb` MCP server reads: the
+# per-run nonce that ties `request_approval` to the run in progress (F-CL3b, C46).
+RUN_NONCE_ENV: Final = "CLAUDIA_RUN_NONCE"
 
 
 class RunRefusedError(InvalidStateError):
@@ -44,6 +48,8 @@ class RunRequest:
             refuses to spawn it once a newer stop epoch was seen (C58).
         persona: the checked, framed persona block (F-CL2) or "" for none; the
             runner appends it after the fixed host rules, never before.
+        run_nonce: random per-run token (hex) the runner puts in the child env as
+            `RUN_NONCE_ENV`; "" = none (recap). Never logged or in the repr.
     """
 
     window_id: WindowId
@@ -57,6 +63,7 @@ class RunRequest:
     builtin_tools: tuple[str, ...] = ()
     generation: int = 0
     persona: str = ""
+    run_nonce: str = ""
 
     def __repr__(self) -> str:
         # The prompt is owner text: never in reprs or logs (C29).
@@ -225,6 +232,14 @@ class HostAdmin(Protocol):
         """Cancel every open approval request of `window_id` (`/stop`, C58); return their ids."""
         ...
 
+    def cancel_all_open_approvals(self) -> Sequence[str]:
+        """Cancel every open approval request of every window; return their ids.
+
+        For host start and `/stop` (F-CL3b): requests that outlive a restart or
+        a closed window would otherwise hold the open cap for 24 h.
+        """
+        ...
+
     def report_health(self, screen: str) -> None:
         """Report screen health (`ok` | `degraded` | `down`)."""
         ...
@@ -287,11 +302,20 @@ class ApprovalAdmin(Protocol):
 class RunGate(Protocol):
     """The C59/C60 hook gate's run lifecycle (`HookGate`): covers live exactly one run."""
 
-    def begin_run(self, window_id: WindowId, covers: Iterable[ApprovalRequest] = ()) -> None:
+    def begin_run(
+        self,
+        window_id: WindowId,
+        covers: Iterable[ApprovalRequest] = (),
+        *,
+        carry_over: bool = False,
+    ) -> None:
         """Start a run of `window_id` holding these CONSUMED approvals.
 
+        `carry_over`: the covers were asked in an earlier, since closed window (F-CL3).
+
         Raises:
-            ValidationError: a cover is not a CONSUMED approval of that window.
+            ValidationError: a cover is not CONSUMED, or of another window
+                without `carry_over`.
         """
         ...
 

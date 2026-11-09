@@ -5,14 +5,18 @@ window (recap turn), screens the message through the `Screen` port (unit
 M4a), picks the **full** set only for an `ok` verdict (flagged / degraded ->
 **read-only**, the text quoted as content), runs the turn, audits the
 transcript (C52) and posts her reply (as a voice note too with `/voice`
-on, C56). A run ending `waiting for approval: …` goes to the approval flow
-(unit M5b, C46/C55). Every run (recap included) is wrapped in the hook
+on, C56). A run ending `waiting for approval: …`, or one that called
+`request_approval`, leaves a parked request in the approval flow (C46/C55);
+once the owner decides, `settle_approval` runs the resume turn on the
+worker, in the request's window or, if that closed meanwhile, the current
+or a new one (carry-over, F-CL3). Every run (recap included) is wrapped in the hook
 gate's `begin_run`/`end_run` (C59) and followed by a KB commit (C53); a
 commit that finds the KB busy (gardener) is retried later, a failed one
 restores the KB work tree under the KB locks and sends one `failed` alert,
 and a failed restore halts the host (persisted) until a `/new` restores the
 tree and finds it clean.
-`/stop` kills every run, cancels open approvals and drops queued messages
+`/stop` kills every run, cancels open approvals (parked ones of any window
+too) and drops queued messages
 (C58); every run carries its `/stop` generation and is refused right
 before spawning (host and runner) if a stop came after it was queued.
 Runs get a strict `--tools` list of known built-ins and the fixed
@@ -29,12 +33,16 @@ import re
 import secrets
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Final
 
-from preview_dashboard.application.claudia.approval_flow import ApprovalFlow
+from preview_dashboard.application.claudia.approval_flow import (
+    ApprovalFlow,
+    ParkedApproval,
+    RunContext,
+)
 from preview_dashboard.application.claudia.audit import PeerAudit
 from preview_dashboard.application.claudia.persona import PersonaLoader
 from preview_dashboard.application.claudia.pings import PingTicket, ProgressPings
@@ -49,6 +57,7 @@ from preview_dashboard.application.claudia.windows import (
 from preview_dashboard.domain.approvals import ApprovalRequest, WindowId
 from preview_dashboard.domain.errors import DomainError
 from preview_dashboard.domain.owner_messages import OwnerMessage, OwnerMessageId
+from preview_dashboard.domain.risky_actions import PEER_MESSAGE_PREFIX
 from preview_dashboard.ports.claudia_host import (
     ClaudeRunner,
     HostAdmin,
@@ -108,6 +117,9 @@ DASHBOARD_WRITE_TOOLS: Final = _dashboard(
 )
 KB_READ_TOOLS: Final = _kb("kb_read")
 KB_WRITE_TOOLS: Final = _kb("kb_write", "kb_delete")
+# F-CL3: opens a PENDING request through the host; full turns only (the host
+# refuses it outside one too).
+APPROVAL_TOOLS: Final = _kb("request_approval")
 READ_BUILTINS: Final = ("Read", "Grep", "Glob", "ListAgents", "ToolSearch")
 # Everything that changes state, runs code, reaches other sessions or the web.
 MUTATING_BUILTINS: Final = (
@@ -176,6 +188,7 @@ TOOL_SETS: Final = {
             *DASHBOARD_WRITE_TOOLS,
             *KB_READ_TOOLS,
             *KB_WRITE_TOOLS,
+            *APPROVAL_TOOLS,
         ),
         disallowed=TELEGRAM_TOOLS,
     ),
@@ -184,13 +197,24 @@ TOOL_SETS: Final = {
     ToolSetName.READ_ONLY: ToolSet(
         ToolSetName.READ_ONLY,
         allowed=(*READ_BUILTINS, *DASHBOARD_READ_TOOLS, *KB_READ_TOOLS),
-        disallowed=(*MUTATING_BUILTINS, *DASHBOARD_WRITE_TOOLS, *KB_WRITE_TOOLS, *TELEGRAM_TOOLS),
+        disallowed=(
+            *MUTATING_BUILTINS,
+            *DASHBOARD_WRITE_TOOLS,
+            *KB_WRITE_TOOLS,
+            *APPROVAL_TOOLS,
+            *TELEGRAM_TOOLS,
+        ),
     ),
     # Recap: read-only plus the host's KB tool (C51, C53).
     ToolSetName.RECAP: ToolSet(
         ToolSetName.RECAP,
         allowed=(*READ_BUILTINS, *DASHBOARD_READ_TOOLS, *KB_READ_TOOLS, *KB_WRITE_TOOLS),
-        disallowed=(*MUTATING_BUILTINS, *DASHBOARD_WRITE_TOOLS, *TELEGRAM_TOOLS),
+        disallowed=(
+            *MUTATING_BUILTINS,
+            *DASHBOARD_WRITE_TOOLS,
+            *APPROVAL_TOOLS,
+            *TELEGRAM_TOOLS,
+        ),
     ),
 }
 
@@ -216,7 +240,15 @@ HOST_RULES_PROMPT: Final = (
     "tools of the dashboard MCP server, the preview-dashboard or preview-dashboard-mcp "
     "programs, the admin socket or Telegram directly, and never write scripts that do. "
     "3. When a tool call is denied or blocked, do not look for another way to do it: say "
-    "in your reply what was blocked and what you need from the owner."
+    "in your reply what was blocked and what you need from the owner. "
+    "4. A step the safety check says needs the owner's approval: call the request_approval "
+    "tool once with the action_kind and the exact action_target from the deny message and a "
+    "short reason, then end your turn; the host resumes you when the owner decides "
+    "(Approve button + authenticator code, up to 24 hours). Never retry the step before. "
+    "5. Every message you send to another Claude session with SendMessage must start with "
+    "exactly: " + PEER_MESSAGE_PREFIX + " "
+    "6. Use one plain command per Bash call (no chains, pipes, inline python or sh -c); "
+    "forms the check can't read are never approvable."
 )
 
 REPLY_REFUSED_TEXT: Final = "I couldn't send that reply safely."
@@ -304,6 +336,7 @@ class ClaudiaHost:
         alerts: fixed `failed` alerts.
         clock: source of "now".
         nonce: per-turn marker source (tests inject a fixed one).
+        run_nonce: per-run token for `request_approval` (F-CL3b; tests inject one).
         gate: the C59/C60 hook gate; `begin_run`/`end_run` wrap every run.
         flow: the approval flow (C46, C55); None = no approvals.
         kb: commits the KB after every run (C53), optional; restores the
@@ -326,6 +359,7 @@ class ClaudiaHost:
         alerts: HostAlerts,
         clock: Clock,
         nonce: Callable[[], str] = lambda: secrets.token_hex(8),
+        run_nonce: Callable[[], str] = lambda: secrets.token_hex(16),
         gate: RunGate | None = None,
         flow: ApprovalFlow | None = None,
         kb: KbCommits | None = None,
@@ -343,6 +377,7 @@ class ClaudiaHost:
         self._alerts = alerts
         self._clock = clock
         self._nonce = nonce
+        self._run_nonce = run_nonce
         self._gate = gate
         self._flow = flow
         self._kb = kb
@@ -355,6 +390,11 @@ class ClaudiaHost:
         self._generation = 0
         self._credential_expires_at: str | None = None
         self._pending_commit: str | None = None  # a post-run commit that found the KB busy
+
+    @property
+    def has_approvals(self) -> bool:
+        """True if an approval flow is wired (the host loop then watches parked requests)."""
+        return self._flow is not None
 
     @property
     def generation(self) -> int:
@@ -396,9 +436,19 @@ class ClaudiaHost:
         tools = tool_set_for(result)
         _log.info("message %s: screen %s, tool set %s", message.id, result.verdict, tools.name)
         ticket = self._arm_pings(message.id)
+        context = RunContext(
+            window_id=window.id,
+            message_id=message.id,
+            actionable=result.actionable,
+            generation=generation,
+        )
         try:
             outcome = self._run(
-                window, build_prompt(message, result, self._nonce()), tools, generation=generation
+                window,
+                build_prompt(message, result, self._nonce()),
+                tools,
+                generation=generation,
+                context=context,
             )
         finally:
             # Before any reply: cancel() returns only once no ping can follow (F-CL2).
@@ -412,8 +462,32 @@ class ClaudiaHost:
                 text,
                 actionable=result.actionable,
                 message_id=message.id,
-                hooks=_FlowHooks(self, window.id, message.id, generation),
+                hooks=_FlowHooks(self, message.id, generation, chain=0),
+                generation=generation,
             )
+
+    def settle_approval(self, decided: ParkedApproval) -> None:
+        """Act on a decided parked request on the worker thread (F-CL3); never raises.
+
+        Dropped if a `/stop` came after it was asked (its generation is older).
+        """
+        if self._flow is None:
+            return
+        try:
+            if decided.generation != self.generation:
+                _log.info("approval %s dropped: asked before /stop", decided.request.id)
+                return
+            hooks = _FlowHooks(self, decided.message_id, decided.generation, chain=decided.chain)
+            self._flow.settle(decided, hooks)
+        except Exception as exc:
+            # Same isolation as a message: one bad settle never stops the worker.
+            _log.error("approval %s settle failed (%s)", decided.request.id, type(exc).__name__)
+
+    def poll_approvals(self) -> list[ParkedApproval]:
+        """One watch round over the parked approval requests (approvals thread, F-CL3)."""
+        if self._flow is None:
+            return []
+        return self._flow.poll_parked()
 
     def _arm_pings(self, message_id: OwnerMessageId) -> PingTicket | None:
         """Progress pings for an owner-message run only (never recap, resume or commands)."""
@@ -460,8 +534,13 @@ class ClaudiaHost:
         generation: int,
         covers: tuple[ApprovalRequest, ...] = (),
         approved_sessions: tuple[str, ...] = (),
+        context: RunContext | None = None,
     ) -> RunOutcome:
-        """Run one turn; a `/stop` since `generation` refuses it before it spawns (C58)."""
+        """Run one turn; a `/stop` since `generation` refuses it before it spawns (C58).
+
+        `context` lets `request_approval` open a request for this run (F-CL3);
+        None (recap) refuses it.
+        """
         if self._stopped_since(generation):
             _log.info("window %s run refused: /stop since it was queued", window.id)
             return RunOutcome(exit_code=None, killed=True)
@@ -470,8 +549,12 @@ class ClaudiaHost:
             # That retry failed and its restore too: no run (fail closed, C53).
             return RunOutcome(exit_code=None, is_error=True)
         since = self._audit.offset(window.id)
+        # F-CL3b: a fresh secret per run, in the child's env only; the tool must present it.
+        run_nonce = "" if context is None else self._run_nonce()
         if self._flow is not None:
-            self._flow.begin_run(window.id)
+            self._flow.begin_run(
+                window.id, None if context is None else replace(context, nonce=run_nonce)
+            )
         request = RunRequest(
             window_id=window.id,
             resume=window.started,
@@ -484,15 +567,22 @@ class ClaudiaHost:
             generation=generation,
             # F-CL2: read at every run (all sets); the runner puts it after the host rules.
             persona="" if self._persona is None else self._persona.block(),
+            run_nonce=run_nonce,
         )
         # C59: without begin_run every hooked call is denied; covers end with the run.
-        if self._gate is not None:
-            self._gate.begin_run(window.id, covers)
+        # A cover asked in a window that closed while the owner decided is carried over.
+        carry_over = any(cover.window_id != window.id for cover in covers)
         try:
-            outcome = self._runner.run(request)
-        finally:
             if self._gate is not None:
-                self._gate.end_run()
+                self._gate.begin_run(window.id, covers, carry_over=carry_over)
+            try:
+                outcome = self._runner.run(request)
+            finally:
+                if self._gate is not None:
+                    self._gate.end_run()
+        finally:
+            if self._flow is not None:
+                self._flow.end_run()
         _log.info("window %s run ended: %r", window.id, outcome)
         if outcome.exit_code == 0 or self._audit.offset(window.id) > 0:
             self._windows.mark_started(window.id)
@@ -625,7 +715,6 @@ class ClaudiaHost:
 
     def run_resume_turn(
         self,
-        window_id: WindowId,
         prompt: str,
         *,
         full: bool,
@@ -633,14 +722,30 @@ class ClaudiaHost:
         approved_sessions: tuple[str, ...],
         message_id: OwnerMessageId | None,
         generation: int,
-    ) -> RunOutcome | None:
-        """One approval resume turn (flow callback); None if stopped, refused or killed."""
-        window = self._windows.current
-        if generation != self.generation or window is None or window.id != window_id:
+        chain: int,
+    ) -> tuple[WindowId, RunOutcome] | None:
+        """One approval resume turn (flow callback); None if stopped, refused or killed.
+
+        Runs in the open window, which is the request's own unless it closed
+        while the owner decided (3 h idle, 8 h cap, `/new`): then the open one
+        or a new one (F-CL3 carry-over; the cover is still exactly the
+        approved action, for this run only). Returns the window it ran in.
+        """
+        if generation != self.generation:
+            return None
+        window = self._windows.current or self._windows.open_for_resume(generation)
+        if window is None:
             return None
         if not self._preflight_ok(message_id):
             return None
         tools = TOOL_SETS[ToolSetName.FULL if full else ToolSetName.READ_ONLY]
+        context = RunContext(
+            window_id=window.id,
+            message_id=message_id,
+            actionable=full,
+            generation=generation,
+            chain=chain + 1,  # an ask from this run is the next round-trip
+        )
         outcome = self._run(
             window,
             prompt,
@@ -648,10 +753,11 @@ class ClaudiaHost:
             generation=generation,
             covers=covers,
             approved_sessions=approved_sessions,
+            context=context,
         )
         if generation != self.generation or outcome.killed:
             return None
-        return outcome
+        return window.id, outcome
 
     # --- windows -----------------------------------------------------------------------
 
@@ -726,13 +832,36 @@ class ClaudiaHost:
         _log.warning("stop: %d process group(s) killed", killed)
         if ticket is not None:
             ticket.cancel()  # joins an in-flight ping: none after /stop or shutdown (F-CL2)
-        if window is not None:
-            try:
-                self._admin.cancel_open_approvals(window.id)
-            except Exception as exc:
-                # Still stopped locally; the approvals expire on their own in 600 s.
-                _log.error("stop: cancelling approvals failed (%s)", type(exc).__name__)
-                self._alerts.failed("Claudia stop: open approvals could not be cancelled")
+        if self._flow is not None:
+            # F-CL3: parked requests may belong to windows closed since: cancel each by id.
+            self._flow.cancel_parked()
+        try:
+            if window is not None:
+                self._admin.cancel_open_approvals(window.id)  # also resets the window's budgets
+            # F-CL3b: then every other window's too, incl. an approved-but-unparked request
+            # that was queued when /stop arrived (its settle is dropped by the generation).
+            cancelled = self._admin.cancel_all_open_approvals()
+            _log.warning("stop: %d open approval(s) cancelled", len(cancelled))
+        except Exception as exc:
+            # Still stopped locally; the approvals expire on their own (24 h).
+            _log.error("stop: cancelling approvals failed (%s)", type(exc).__name__)
+            self._alerts.failed("Claudia stop: open approvals could not be cancelled")
+
+    def cancel_stranded_approvals(self) -> int:
+        """At host start: cancel every open request of any window; return how many (F-CL3b).
+
+        Parked requests live in memory only, so a restart or deploy loses
+        them; left open they would hold the open cap for up to 24 h. The owner
+        asks again. Never raises: a failure is logged and alerted once.
+        """
+        try:
+            cancelled = self._admin.cancel_all_open_approvals()
+        except Exception as exc:
+            _log.error("start: cancelling stranded approvals failed (%s)", type(exc).__name__)
+            self._alerts.failed("Claudia start: stale approval requests could not be cancelled")
+            return 0
+        _log.warning("start: %d stranded approval request(s) cancelled", len(cancelled))
+        return len(cancelled)
 
     def status_text(self, now: datetime | None = None) -> str:
         """Health only (C58): window age, work, approvals, screen, subscription; no message text."""
@@ -766,19 +895,25 @@ class ClaudiaHost:
 
 
 class _FlowHooks:
-    """`TurnHooks` for one owner message: binds the flow to this host, window and generation."""
+    """`TurnHooks` for one owner message's approval: binds the flow to this host and generation.
+
+    `chain` is the round-trip index of the request being settled; the window
+    of the last resume turn is kept for a chained ask (`window()`).
+    """
 
     def __init__(
         self,
         host: ClaudiaHost,
-        window_id: WindowId,
-        message_id: OwnerMessageId,
+        message_id: OwnerMessageId | None,
         generation: int,
+        *,
+        chain: int,
     ) -> None:
         self._host = host
-        self._window_id = window_id
         self._message_id = message_id
         self._generation = generation
+        self._chain = chain
+        self._window: WindowId | None = None
 
     def run_turn(
         self,
@@ -789,15 +924,23 @@ class _FlowHooks:
         approved_sessions: tuple[str, ...],
     ) -> RunOutcome | None:
         """Run the resume turn (see `ClaudiaHost.run_resume_turn`)."""
-        return self._host.run_resume_turn(
-            self._window_id,
+        ran = self._host.run_resume_turn(
             prompt,
             full=full,
             covers=covers,
             approved_sessions=approved_sessions,
             message_id=self._message_id,
             generation=self._generation,
+            chain=self._chain,
         )
+        if ran is None:
+            return None
+        self._window, outcome = ran
+        return outcome
+
+    def window(self) -> WindowId | None:
+        """The window the last resume turn ran in."""
+        return self._window
 
     def reply_run(self, outcome: RunOutcome) -> str | None:
         """Send her reply for a resume turn."""

@@ -32,7 +32,7 @@ from preview_dashboard.domain.dashboard_bypass import (
 )
 from preview_dashboard.interfaces.claudia import hook as hook_cmd
 from preview_dashboard.interfaces.claudia.hook import _REASON_RE
-from tests.claudia_host_support import WINDOW_A, FakeAuditLog, FakePeers
+from tests.claudia_host_support import WINDOW_A, FakeAuditLog
 from tests.fakes import FixedClock
 
 pytestmark = pytest.mark.security
@@ -121,7 +121,7 @@ def test_fcl1_ordinary_content_is_not_a_bypass() -> None:
 def _gate() -> tuple[HookGate, FakeAuditLog, DenialRecorder]:
     log = FakeAuditLog()
     recorder = DenialRecorder(log)
-    gate = HookGate(FakePeers(), recorder, FixedClock())
+    gate = HookGate(recorder, FixedClock())
     gate.begin_run(WINDOW_A)
     return gate, log, recorder
 

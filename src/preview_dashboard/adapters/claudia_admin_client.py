@@ -308,7 +308,21 @@ class ClaudiaAdminClient:
         Raises:
             ClaudiaAdminError: transport error, non-200 or a malformed result.
         """
-        body = wire.cancel_open_request_to_json(parse_window_id(window_id))
+        return self._cancel_open(parse_window_id(window_id))
+
+    def cancel_all_open_approvals(self) -> list[str]:
+        """`POST .../approvals/cancel-open` with `{}`: every window's open requests.
+
+        For host start and `/stop` (F-CL3b); a separate method so the one-window
+        call above can never fall back to this by accident.
+
+        Raises:
+            ClaudiaAdminError: transport error, non-200 or a malformed result.
+        """
+        return self._cancel_open(None)
+
+    def _cancel_open(self, window_id: WindowId | None) -> list[str]:
+        body = wire.cancel_open_request_to_json(window_id)
         answer = self._post(APPROVALS_CANCEL_OPEN_PATH, body, "approvals")
         try:
             return list(wire.parse_cancel_open_result(answer))

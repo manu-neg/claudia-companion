@@ -1,10 +1,10 @@
 """C52: peer-message audit from the run's transcript (detective layer behind the C60 hook).
 
 Every `SendMessage` in a fixture transcript is recorded (target, summary,
-length, SHA-256), never its text; a missing prefix or an unapproved
-interactive (or unknown) target is a violation that alerts and stops the
-window; only bytes appended by the run are audited; a planted symlink or
-an oversized slice fails closed.
+length, SHA-256, interactive or not), never its text; a missing prefix is
+the violation that alerts and stops the window (since F-CL3 an interactive
+target needs no approval); only bytes appended by the run are audited; a
+planted symlink or an oversized slice fails closed.
 """
 
 from __future__ import annotations
@@ -75,18 +75,25 @@ def test_c52_every_send_message_in_a_fixture_transcript_audited(tmp_path: Path) 
     assert (first["prefixed"], first["interactive"]) == (True, False)
 
 
-def test_c52_missing_prefix_and_unapproved_interactive_target_are_violations(
-    tmp_path: Path,
-) -> None:
+def test_c52_missing_prefix_is_the_only_violation(tmp_path: Path) -> None:
+    # The fixture's second message lacks the prefix (it goes to an interactive session).
     audit, _ = audit_over(install_fixture(tmp_path))
     report = audit.audit_run(WINDOW_A, since=0)
-    assert report.violations == (
-        AuditViolation.MISSING_PREFIX,
-        AuditViolation.INTERACTIVE_WITHOUT_APPROVAL,
+    assert report.violations == (AuditViolation.MISSING_PREFIX,)
+
+
+def test_fcl3_c52_interactive_target_with_prefix_is_clean_without_approval() -> None:
+    # Owner decision 2026-11-09 (F-CL3): the prefix is the only rule; still recorded.
+    call = SendMessageCall(
+        target="dash-session", text=PEER_PREFIX + " hi", summary="hi", timestamp=None
     )
+    audit, log = audit_over(FakeTranscripts(calls={WINDOW_A: [call]}))
+    assert audit.audit_run(WINDOW_A, 0).clean
+    assert log.entries[0]["interactive"] is True
+    assert log.entries[0]["approved"] is False
 
 
-def test_c52_approved_interactive_target_with_prefix_is_clean() -> None:
+def test_c52_approved_session_is_still_recorded() -> None:
     call = SendMessageCall(
         target="dash-session", text=PEER_PREFIX + " hi", summary="hi", timestamp=None
     )
@@ -95,21 +102,18 @@ def test_c52_approved_interactive_target_with_prefix_is_clean() -> None:
     assert log.entries[0]["approved"] is True
 
 
-def test_c52_approval_for_another_session_does_not_count() -> None:
-    call = SendMessageCall(
-        target="dash-session", text=PEER_PREFIX + " hi", summary="", timestamp=None
-    )
-    audit, _ = audit_over(FakeTranscripts(calls={WINDOW_A: [call]}))
-    report = audit.audit_run(WINDOW_A, 0, approved_sessions={"sess-worker"})
-    assert report.violations == (AuditViolation.INTERACTIVE_WITHOUT_APPROVAL,)
-
-
-def test_c52_unknown_target_counts_as_interactive() -> None:
+def test_fcl3_c52_unknown_target_with_prefix_is_clean_and_logged_interactive() -> None:
     call = SendMessageCall(target="ghost", text=PEER_PREFIX + " hi", summary="", timestamp=None)
     audit, log = audit_over(FakeTranscripts(calls={WINDOW_A: [call]}))
-    report = audit.audit_run(WINDOW_A, 0)
-    assert report.violations == (AuditViolation.INTERACTIVE_WITHOUT_APPROVAL,)
+    assert audit.audit_run(WINDOW_A, 0).clean
     assert log.entries[0]["interactive"] is True and log.entries[0]["session"] is None
+
+
+def test_fcl3_c52_missing_prefix_to_an_interactive_session_still_alerts_and_stops() -> None:
+    bad = SendMessageCall(target="dash-session", text="hi there", summary="", timestamp=None)
+    rig = host_rig(transcripts=FakeTranscripts(calls={WINDOW_A: [bad]}), peers=FakePeers(PEERS))
+    rig.host.handle_message(message("hola", 1), generation=0)
+    assert len(rig.alerts.titles) == 1 and rig.windows.halted
 
 
 def test_c52_no_message_text_in_the_log(tmp_path: Path) -> None:

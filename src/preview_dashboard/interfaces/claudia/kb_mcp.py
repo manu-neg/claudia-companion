@@ -3,6 +3,12 @@
 Exposes `kb_read`, `kb_write` and `kb_delete` over `KbService`, which applies
 the layout, caps and secret scan. Started per run by the Claudia host with
 `--root` and `--caller`; commits the run's changes once when the run ends.
+For `--caller claudia` only it also exposes `request_approval` (F-CL3, C46):
+the call goes to the host's control socket, which checks it and opens the
+request; recap and gardener runs never get it. Hosting it here keeps the
+host MCP config (exactly two pinned servers, C51) unchanged. The call carries
+the run's nonce from the env the host sets per run (`CLAUDIA_RUN_NONCE`,
+F-CL3b); without it the tool refuses.
 """
 
 from __future__ import annotations
@@ -24,8 +30,10 @@ from preview_dashboard.adapters.kb_store import FsKbStore
 from preview_dashboard.adapters.secret_scan import RegexSecretScanner
 from preview_dashboard.application.claudia.kb import KbService
 from preview_dashboard.domain.errors import DomainError
+from preview_dashboard.interfaces.claudia.approval_tool import ApprovalToolError, HostApprovals
 
 SERVER_NAME: Final = "claudia-kb"
+APPROVAL_CALLER: Final = "claudia"
 EXIT_OK: Final = 0
 EXIT_FAILED: Final = 1
 logger = logging.getLogger(__name__)
@@ -42,9 +50,30 @@ _INSTRUCTIONS: Final = (
 class KbTools:
     """Tool bodies: map `KbService` results and domain errors to MCP text / `ToolError`."""
 
-    def __init__(self, service: KbService, caller: str) -> None:
+    def __init__(
+        self, service: KbService, caller: str, approvals: HostApprovals | None = None
+    ) -> None:
         self._service = service
         self._caller = caller
+        self._approvals = approvals
+
+    @property
+    def can_request_approval(self) -> bool:
+        """True only for Claudia's own runs (never recap or gardener, F-CL3)."""
+        return self._approvals is not None and self._caller == APPROVAL_CALLER
+
+    def request_approval(self, action_kind: str, action_target: str, reason: str) -> str:
+        """Ask the host to open an approval request; returns the pending text.
+
+        Raises:
+            ToolError: the host refused (its fixed reason) or could not be reached.
+        """
+        if self._approvals is None or not self.can_request_approval:
+            raise ToolError("refused: approvals are not available in this run")
+        try:
+            return self._approvals.request(action_kind, action_target, reason)
+        except ApprovalToolError as exc:
+            raise ToolError(exc.text) from None
 
     def read(self, path: str) -> str:
         """Return a note's text.
@@ -125,7 +154,32 @@ def build_server(tools: KbTools) -> MCPServer:
     def kb_delete(path: _PathArg) -> str:
         return tools.delete(path)
 
+    if tools.can_request_approval:
+        _register_request_approval(server, tools)
     return server
+
+
+def _register_request_approval(server: MCPServer, tools: KbTools) -> None:
+    opens = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=False)
+
+    @server.tool(
+        name="request_approval",
+        annotations=opens,
+        structured_output=False,
+        description=(
+            "Ask the owner to approve one risky step the safety check denied (Approve button "
+            "+ authenticator code on Telegram, up to 24 hours). action_kind: one of deploy, "
+            "dashboard_delete, git_push_main, pr_merge, rm, settings_edit. action_target: the "
+            "exact target from the deny message. reason: one short plain line. Then end your "
+            "turn; the host resumes you with the owner's decision. One request per turn."
+        ),
+    )
+    def request_approval(
+        action_kind: Annotated[str, Field(min_length=1, max_length=40)],
+        action_target: Annotated[str, Field(min_length=1, max_length=400)],
+        reason: Annotated[str, Field(min_length=1, max_length=120)],
+    ) -> str:
+        return tools.request_approval(action_kind, action_target, reason)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -153,7 +207,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     # A terminated run still gets its commit: SIGTERM unwinds through `finally`.
     signal.signal(signal.SIGTERM, lambda _s, _f: sys.exit(EXIT_OK))
     try:
-        build_server(KbTools(service, args.caller)).run("stdio")
+        # Fixed host socket path (as in the hook): no option the pinned config could move.
+        approvals = HostApprovals() if args.caller == APPROVAL_CALLER else None
+        build_server(KbTools(service, args.caller, approvals)).run("stdio")
     finally:
         try:
             service.commit_run(f"{args.caller}: run")

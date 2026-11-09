@@ -123,13 +123,13 @@ def test_c58_stop_during_resume_preflight_starts_no_resume_turn() -> None:
     assert len(rig.runner.requests) == 1
     rig.preflight.on_check = rig.host.stop
     outcome = rig.host.run_resume_turn(
-        WINDOW_A,
         "approved: go on",
         full=True,
         covers=(),
         approved_sessions=(),
         message_id=message("hola", 1).id,
         generation=0,
+        chain=0,
     )
     assert outcome is None
     assert len(rig.runner.requests) == 1

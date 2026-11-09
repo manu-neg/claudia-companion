@@ -91,7 +91,7 @@ GOLDEN_FULL = [
     *PREFIX,
     TOOLS_FULL,
     f"--allowedTools={READS},{MUTATING},TodoWrite,{DASH_READ},{DASH_WRITE},"
-    f"{K}kb_read,{K}kb_write,{K}kb_delete",
+    f"{K}kb_read,{K}kb_write,{K}kb_delete,{K}request_approval",
     f"--disallowedTools={TELEGRAM}",
     "--resume",
     WINDOW_A,
@@ -100,7 +100,8 @@ GOLDEN_READ_ONLY = [
     *PREFIX,
     TOOLS_READ_ONLY,
     f"--allowedTools={READS},{DASH_READ},{K}kb_read",
-    f"--disallowedTools={MUTATING},{DASH_WRITE},{K}kb_write,{K}kb_delete,{TELEGRAM}",
+    f"--disallowedTools={MUTATING},{DASH_WRITE},{K}kb_write,{K}kb_delete,"
+    f"{K}request_approval,{TELEGRAM}",
     "--session-id",
     WINDOW_A,
 ]
@@ -203,6 +204,14 @@ def test_c51_read_only_sets_deny_every_mutating_tool(name: ToolSetName) -> None:
 def test_c51_kb_writes_only_in_recap_and_full() -> None:
     assert f"{K}kb_write" in TOOL_SETS[ToolSetName.RECAP].allowed
     assert f"{K}kb_write" in TOOL_SETS[ToolSetName.READ_ONLY].disallowed
+
+
+def test_fcl3_c51_request_approval_only_in_the_full_set() -> None:
+    tool = f"{K}request_approval"
+    assert tool in TOOL_SETS[ToolSetName.FULL].allowed
+    for name in (ToolSetName.READ_ONLY, ToolSetName.RECAP):
+        assert tool in TOOL_SETS[name].disallowed
+        assert tool not in TOOL_SETS[name].allowed
 
 
 @pytest.mark.parametrize("name", list(ToolSetName))

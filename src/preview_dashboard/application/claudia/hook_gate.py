@@ -6,18 +6,21 @@ and answers `deny` (reason = the action kind, never command text) or
 A risky call gets no decision only if the run in progress holds a
 CONSUMED approval with the same `action_kind` + `action_target` that no
 earlier call used: one approval covers **one** call (orchestrator decision,
-backlog §15.2) and its cover ends with the run. `SendMessage` needs the
-peer prefix, and for an interactive or unknown session a `peer_message`
-approval for that session (C60). A tool it does not know, malformed
-input, no run in progress or another session id: deny (fail closed). A
-call that would reach the owner past the host (dashboard MCP server, CLI,
-admin socket; `domain/dashboard_bypass.py`, F-CL1) is denied as
-`dashboard_bypass`, never approvable. Framework-free; thread-safe.
+backlog §15.2) and its cover ends with the run. `SendMessage` needs only
+the exact peer prefix, to any live session (C60 as changed by F-CL3, ADR
+0041). A tool it does not know, malformed input, no run in progress or
+another session id: deny (fail closed). A call that would reach the owner
+past the host (dashboard MCP server, CLI, admin socket;
+`domain/dashboard_bypass.py`, F-CL1) is denied as `dashboard_bypass`, never
+approvable. Deny reasons say what to do next (F-CL3): call
+`request_approval` with the exact kind + target, or use one plain command;
+never how to get around a block (C55). Framework-free; thread-safe.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -31,12 +34,12 @@ from preview_dashboard.domain.approvals import (
     ApprovalRequest,
     ApprovalState,
     WindowId,
-    normalize_action_target,
     parse_window_id,
 )
 from preview_dashboard.domain.dashboard_bypass import DASHBOARD_BYPASS_LABEL, is_dashboard_bypass
 from preview_dashboard.domain.errors import ValidationError
 from preview_dashboard.domain.risky_actions import (
+    PEER_MESSAGE_PREFIX,
     SEND_MESSAGE_TOOL,
     UNKNOWN_LABEL,
     RiskyAction,
@@ -44,7 +47,7 @@ from preview_dashboard.domain.risky_actions import (
     has_peer_prefix,
     is_known_tool,
 )
-from preview_dashboard.ports.claudia_host import AuditLog, PeerDirectory
+from preview_dashboard.ports.claudia_host import AuditLog
 from preview_dashboard.ports.clock import Clock
 
 _log = logging.getLogger(__name__)
@@ -79,22 +82,55 @@ class HookDecision:
         return cls(HookVerdict.NO_DECISION)
 
 
-# Fixed reasons; the action kind is the only variable part (C59).
+# Fixed reasons; the action kind and the classifier's exact target are the only
+# variable parts (C59): never the command or message text.
+# Equal to the hook's `_REASON_RE` (interfaces/claudia/hook.py; a test keeps them equal):
+# a reason outside it would turn into "host reply unreadable" there.
+REASON_PATTERN: Final = r"[A-Za-z0-9_ :,./()#'=+@~-]{1,400}"
+_REASON_RE: Final = re.compile(REASON_PATTERN)
 REASON_MALFORMED: Final = "malformed hook input"
 REASON_NO_RUN: Final = "no Claudia run in progress for this session"
 REASON_ERROR: Final = "hook check failed"
-REASON_PEER_PREFIX: Final = "peer_message: text must start with the Claudia prefix"
+# F-CL3: quote the exact prefix, so one retry fixes it.
+REASON_PEER_PREFIX: Final = (
+    f"peer_message: start the message with exactly this text, then retry: {PEER_MESSAGE_PREFIX}"
+)
 REASON_UNKNOWN_TOOL: Final = "unknown: this tool is not available in Claudia runs"
-# <= 160 chars of the hook's reason charset (interfaces/claudia/hook.py).
+REASON_UNKNOWN_ACTION: Final = (
+    "unknown: this form can never be approved. Use one plain command per call "
+    "(no chains, pipes, inline python, sh -c or eval), or say in your reply what you need"
+)
 REASON_DASHBOARD_BYPASS: Final = (
     "dashboard_bypass: reach the owner only through your reply, never via the dashboard "
     "MCP server, CLI, admin socket or Telegram. Say what you need in the reply"
 )
+_TARGET_SHOWN_MAX: Final = 200
 
 
-def needs_approval(label: str) -> str:
-    """The deny reason for a risky call without a matching consumed approval."""
-    return f"{label}: needs a consumed owner approval for this exact action"
+def needs_approval(label: str, target: str | None = None) -> str:
+    """The deny reason for a risky call without a matching consumed approval (F-CL3).
+
+    With an exact target she can ask for it: the reason names the
+    `request_approval` call. Without one no approval can cover the call, so
+    the reason says to name each path or ref literally in a plain command.
+    """
+    if target is None:
+        return (
+            f"{label}: no exact target, so no approval can cover this form. Use one plain "
+            "command that names each path or ref literally"
+        )
+    head = (
+        f"{label}: needs the owner's approval. Call request_approval with "
+        f"action_kind={label} and the exact action_target below, then end your reply. "
+        "action_target: "
+    )
+    reason = head + target
+    if len(target) > _TARGET_SHOWN_MAX or not _REASON_RE.fullmatch(reason):
+        return (
+            f"{label}: needs the owner's approval, but its target can't be shown here. Use "
+            "one plain command per path or ref, then call request_approval for it"
+        )
+    return reason
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -148,7 +184,6 @@ class HookGate:
     """Decides hook calls against the run in progress (C59, C60).
 
     Args:
-        peers: resolves `SendMessage` targets (unknown -> interactive).
         audit: records denies and used covers (kind + target only, C52).
         clock: time for audit entries.
         realpath: optional symlink resolver for edited paths (`os.path.realpath`).
@@ -156,13 +191,11 @@ class HookGate:
 
     def __init__(
         self,
-        peers: PeerDirectory,
         audit: AuditLog,
         clock: Clock,
         *,
         realpath: Callable[[str], str] | None = None,
     ) -> None:
-        self._peers = peers
         self._audit = audit
         self._clock = clock
         self._realpath = realpath
@@ -171,17 +204,29 @@ class HookGate:
 
     # --- run lifecycle (called by the host around every `claude -p` run) ---------------
 
-    def begin_run(self, window_id: WindowId, covers: Iterable[ApprovalRequest] = ()) -> None:
+    def begin_run(
+        self,
+        window_id: WindowId,
+        covers: Iterable[ApprovalRequest] = (),
+        *,
+        carry_over: bool = False,
+    ) -> None:
         """Start a run of `window_id`, with the approvals the host consumed for it.
+
+        `carry_over`: the covers were asked in an earlier window that closed
+        while the owner decided (F-CL3); only then may their window differ.
 
         Raises:
             ValidationError: a cover is not CONSUMED, belongs to another
-                window, or is a `flagged_message` request (covers nothing, C46).
+                window without `carry_over`, or is a `flagged_message`
+                request (covers nothing, C46).
         """
         window = parse_window_id(window_id)
         checked = tuple(covers)
         for request in checked:
-            if request.state is not ApprovalState.CONSUMED or request.window_id != window:
+            if request.state is not ApprovalState.CONSUMED:
+                raise ValidationError("a run's cover must be a CONSUMED approval")
+            if request.window_id != window and not carry_over:
                 raise ValidationError("a run's cover must be a CONSUMED approval of its window")
             if request.kind is ApprovalKind.FLAGGED_MESSAGE:
                 raise ValidationError("a flagged_message approval covers no action")
@@ -242,26 +287,19 @@ class HookGate:
         return run if run is not None and run.window_id == session_id else None
 
     def _send_message(self, run: _Run, call: HookCall) -> HookDecision:
-        """C60: prefix always; interactive or unknown target needs a `peer_message` cover."""
+        """C60 (F-CL3): the exact prefix is the only rule, for every live session.
+
+        Owner decision 2026-11-09: messages to attached sessions no longer
+        need an approval; the prefix tells the receiver who is talking and
+        the C52 transcript audit still records every message.
+        """
         target = call.tool_input.get("to")
         if not isinstance(target, str) or not target or len(target) > MAX_FIELD_CHARS:
             return HookDecision.deny(REASON_MALFORMED)
         if not has_peer_prefix(call.tool_input.get("message")):
             self._record(run, "hook_deny", "peer_message", None, reason="missing_prefix")
             return HookDecision.deny(REASON_PEER_PREFIX)
-        try:
-            peer = self._peers.lookup(target)
-        except Exception as exc:
-            _log.warning("hook: peer lookup failed (%s)", type(exc).__name__)
-            peer = None
-        if peer is not None and not peer.interactive:
-            return HookDecision.no_decision()
-        session = peer.session_id if peer is not None else target
-        try:
-            normalized: str | None = normalize_action_target(session)
-        except ValidationError:
-            normalized = None
-        return self._covered(run, RiskyAction(ActionKind.PEER_MESSAGE, normalized))
+        return HookDecision.no_decision()
 
     def _covered(self, run: _Run, action: RiskyAction) -> HookDecision:
         if action.kind is None or action.target is None:
@@ -284,7 +322,12 @@ class HookGate:
     def _deny(self, run: _Run, action: RiskyAction) -> HookDecision:
         self._record(run, "hook_deny", action.label, action.target)
         _log.info("hook: %s denied", action.label)
-        return HookDecision.deny(needs_approval(action.label))
+        if action.kind is None:
+            return HookDecision.deny(REASON_UNKNOWN_ACTION)
+        if action.kind is ActionKind.PEER_MESSAGE:
+            # Only via SendMessage (prefix rule); never something to ask approval for.
+            return HookDecision.deny(REASON_PEER_PREFIX)
+        return HookDecision.deny(needs_approval(action.label, action.target))
 
     def _record(
         self,
@@ -319,7 +362,9 @@ __all__ = [
     "REASON_DASHBOARD_BYPASS",
     "REASON_MALFORMED",
     "REASON_NO_RUN",
+    "REASON_PATTERN",
     "REASON_PEER_PREFIX",
+    "REASON_UNKNOWN_ACTION",
     "REASON_UNKNOWN_TOOL",
     "HookCall",
     "HookDecision",

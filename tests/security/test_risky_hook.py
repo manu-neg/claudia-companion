@@ -58,7 +58,7 @@ from preview_dashboard.interfaces.claudia.settings import (
     check_settings_sources,
     settings_sources,
 )
-from tests.claudia_host_support import WINDOW_A, WINDOW_B, FakeAuditLog, FakePeers
+from tests.claudia_host_support import WINDOW_A, WINDOW_B, FakeAuditLog
 from tests.fakes import FixedClock
 
 pytestmark = pytest.mark.security
@@ -147,7 +147,7 @@ def tool(
 
 
 def gate(audit: FakeAuditLog | None = None) -> HookGate:
-    return HookGate(FakePeers(), audit or FakeAuditLog(), FixedClock())
+    return HookGate(audit or FakeAuditLog(), FixedClock())
 
 
 def denied(decision: HookDecision) -> bool:
@@ -1066,7 +1066,7 @@ def test_c59_bash_writes_resolve_symlinks(command: str) -> None:
     action = ra.classify_bash(command, CWD, realpath=_fake_realpath)
     assert action is not None  # ... but it resolves into the install
     assert action.kind is ActionKind.SETTINGS_EDIT
-    g = HookGate(FakePeers(), FakeAuditLog(), FixedClock(), realpath=_fake_realpath)
+    g = HookGate(FakeAuditLog(), FixedClock(), realpath=_fake_realpath)
     g.begin_run(WINDOW_A)
     assert denied(g.decide(bash(command)))
 
@@ -1433,7 +1433,7 @@ def test_c59_gate_errors_deny() -> None:
         def record(self, entry: object) -> None:
             raise RuntimeError("disk full")
 
-    g = HookGate(FakePeers(), Exploding(), FixedClock())
+    g = HookGate(Exploding(), FixedClock())
     g.begin_run(WINDOW_A)
     assert denied(g.decide(bash("rm x")))
 

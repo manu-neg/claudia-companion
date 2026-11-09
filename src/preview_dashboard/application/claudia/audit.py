@@ -2,10 +2,11 @@
 
 After every run the host reads the `SendMessage` calls Claude Code wrote
 to that run's transcript (not model output) and records each one: time,
-target, summary, length and SHA-256 of the text, never the text. A message
-without the `From Claudia (owner's companion):` prefix, or to an
-interactive (or unknown) session without a consumed `peer_message`
-approval for that session, is a violation: the caller alerts and stops.
+target, summary, length, whether the session is interactive and SHA-256 of
+the text, never the text. A message without the `From Claudia (owner's
+companion):` prefix is a violation: the caller alerts and stops. Messages to
+interactive sessions no longer need an approval (owner decision 2026-11-09,
+F-CL3, ADR 0041); they are still recorded with `interactive: true`.
 """
 
 from __future__ import annotations
@@ -33,7 +34,6 @@ class AuditViolation(StrEnum):
     """Why an audited run breaks the peer rules (C52)."""
 
     MISSING_PREFIX = "missing_prefix"
-    INTERACTIVE_WITHOUT_APPROVAL = "interactive_without_approval"
     # An unreadable / oversized transcript can't show what was sent: fail closed.
     TRANSCRIPT_INCOMPLETE = "transcript_incomplete"
 
@@ -85,8 +85,8 @@ class PeerAudit:
 
         Args:
             approved_sessions: targets of `peer_message` approvals consumed
-                for this run (unit M5); empty means none, so every message
-                to an interactive session is a violation.
+                for this run (stored rows only since F-CL3); recorded as
+                `approved`, no longer a rule.
         """
         found = self._transcripts.send_messages(window_id, since)
         violations: list[AuditViolation] = []
@@ -143,9 +143,5 @@ class PeerAudit:
                 "approved": approved,
             }
         )
-        violations: list[AuditViolation] = []
-        if not prefixed:
-            violations.append(AuditViolation.MISSING_PREFIX)
-        if interactive and not approved:
-            violations.append(AuditViolation.INTERACTIVE_WITHOUT_APPROVAL)
-        return violations
+        # F-CL3: the prefix is the only rule; `interactive` / `approved` stay in the record.
+        return [] if prefixed else [AuditViolation.MISSING_PREFIX]
