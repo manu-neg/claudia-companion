@@ -614,6 +614,7 @@ sudo /root/.local/bin/claude          # log in with the subscription as root (ne
 sudo /opt/preview-dashboard/.venv/bin/preview-dashboard claudia totp setup --group pdash-totp
 sudo editor /etc/preview-dashboard/config.toml   # claudia_enabled = true
                                                  # kb_root = "/var/lib/claudia-kb" (knowledge map)
+                                                 # claudia_approvals_snapshot = "/var/lib/preview-dashboard/claudia-view/pending-approvals.json"
 sudo deploy/install.sh --owner-login … --host …  # enables + starts the host and the timer
 sudo deploy/check.sh
 ```
@@ -621,6 +622,10 @@ sudo deploy/check.sh
 - Off again: `claudia_enabled = false`, re-run install.sh (host + timer disabled and stopped). Emergency: send `/stop`, or `systemctl stop claudia-host`.
 - Run install.sh from **your** terminal. It refuses to run inside `claudia-host.service` (its admin restart would restart the host and kill the script before its checks); if Claudia must run it, use a separate scope (`systemd-run --scope …`).
 - The host refuses to start (exit 2, journal names the reason, never a value) with an API-key variable set, unsafe settings / a hook switched off in any settings source, or an unsafe token / socket.
+- **Your coding-session rules don't reach her (F-CL1):** her runs, the screen and the gardener run with `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` (set by the host, no unit change), so `/root/.claude/CLAUDE.md`, project CLAUDE.md files and auto memory are not loaded; she still uses root's subscription login. She tells you things only in her reply: if she tries the dashboard MCP server, the `preview-dashboard` CLI or the admin socket herself, the hook denies it (`dashboard_bypass` in the audit log).
+- **Her tone (F-CL2):** every run gets `/var/lib/claudia-kb/persona.md` after the host rules (friendly, upbeat, 1–3 emojis, tone only). Edit it by hand as root (≤ 4 KiB, no invisible/bidi characters, HTML comments are dropped), then **restart `claudia-host`**: the file is pinned by SHA-256 at host start, so a changed file (a hand edit before the restart, or her Bash writing it) makes runs go without the persona and sends one `failed` alert ("persona.md changed since host start; restart claudia-host after a hand edit"). Writing under `/var/lib/claudia-kb` with Bash or Write needs your approval (C59). Deploy never overwrites the live copy: after an update that changes the seed, copy `src/preview_dashboard/application/claudia/prompts/seed/persona.md` over it yourself. An invalid or missing file → she runs without it and the journal says `persona not used (<reason>)`.
+- **Progress pings (F-CL2):** while she works on your message you may see "👀 On it…" (after ~20 s) and "⏳ Still working… 5 min" / "… 10 min" (at most 3, fixed host texts, text only); they stop the moment the run ends, before her reply, and on `/stop`. A ping is skipped once the hour has ≥ 110 replies/pings or when this message's remaining replies would no longer fit after it, so her answer always gets through.
+- **Links in her replies** show defanged (`github[.]com/owner/repo`, no `https://`): replies may carry no web address (C35/C56), so the host rewrites them instead of losing the reply.
 
 ### Voice replies (optional)
 
@@ -628,7 +633,7 @@ sudo deploy/check.sh
 
 ### Live checks (`deploy/check.sh`, only with `claudia_enabled = true`)
 
-Host + timer active; no API-key variable in the host unit or its running process; owners/modes of every file above (incl. `claudia-view/` 0750 and `claudia/stepup-state.json` admin 0600); exact members of `pdash-totp` and `pdash-claudiatok` (`pdash-admin` only) and `pdash-kb` (none); the notifier can't read `totp.secret`; inside the viewer's mount namespace: KB readable and on a read-only mount (`findmnt`), `claudia-view/` readable, Claudia DB dir / `totp.secret` / `claudia.token` unreadable, and every viewer mask actually mounted (`findmnt --task`).
+Host + timer active; no API-key variable in the host unit or its running process; owners/modes of every file above (incl. `claudia-view/` 0750 and `claudia/stepup-state.json` admin 0600); exact members of `pdash-totp` and `pdash-claudiatok` (`pdash-admin` only) and `pdash-kb` (none); the notifier can't read `totp.secret`; inside the viewer's mount namespace: KB readable and on a read-only mount (`findmnt`), `claudia-view/` readable, Claudia DB dir / `totp.secret` / `claudia.token` unreadable, and every viewer mask actually mounted (`findmnt --task`). A `WARN:` (not a failure) appears when `claudia_approvals_snapshot` is unset: the viewer's approvals panel then says "can't be checked".
 
 ### Troubleshooting
 

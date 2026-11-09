@@ -104,7 +104,12 @@ INSTALL_ROOT: Final = "/opt/preview-dashboard"
 CLAUDIA_HOST_STATE_DIR: Final = "/var/lib/claudia-host"
 CLAUDIA_HOST_WORK_DIR: Final = "/var/lib/claudia-host/work"
 REPO_HOST_SETTINGS_SUFFIX: Final = "/deploy/claudia/settings.json"
+# The KB holds `persona.md`, which steers every run (F-CL2b): a shell or file tool
+# writing there needs approval; her own KB writes go through the KB MCP tools.
+KB_ROOT: Final = "/var/lib/claudia-kb"
+KB_PERSONA_NAME: Final = "persona.md"
 _PROTECTED_ROOTS: Final = (
+    KB_ROOT,
     HOST_SETTINGS_FILE,
     HOOK_SCRIPT,
     MANAGED_SETTINGS_FILE,
@@ -232,7 +237,7 @@ def is_protected_path(path: str) -> bool:
         return name.endswith(".json")
     if folded in {HOST_SETTINGS_FILE, HOOK_SCRIPT, MANAGED_SETTINGS_FILE, MANAGED_SETTINGS_DIR}:
         return True
-    if any(_under(folded, root) for root in (MANAGED_SETTINGS_DIR, INSTALL_ROOT)):
+    if any(_under(folded, root) for root in (MANAGED_SETTINGS_DIR, INSTALL_ROOT, KB_ROOT)):
         return True
     if _under(folded, CLAUDIA_HOST_STATE_DIR) and not _under(folded, CLAUDIA_HOST_WORK_DIR):
         return True
@@ -242,7 +247,11 @@ def is_protected_path(path: str) -> bool:
 def _name_protected(raw: str) -> bool:
     """Judge a path we can't place by its name: `settings*.json` or a fixed protected file."""
     name = posixpath.basename(raw.rstrip("/")).casefold()
-    return (name.startswith("settings") and name.endswith(".json")) or name in _PROTECTED_NAMES
+    return (
+        (name.startswith("settings") and name.endswith(".json"))
+        or name in _PROTECTED_NAMES
+        or name == KB_PERSONA_NAME
+    )
 
 
 def _dir_may_hold_protected(path: str) -> bool:
@@ -1035,32 +1044,118 @@ def _gh(args: list[Word], ctx: _Ctx) -> _Found | None:
     return _gh_merge(args[i + 1 :], repo)
 
 
+# `gh api` options that take a value (`--jq`/`-q` and `--template`/`-t` only format the
+# output); the method, field and body options are judged on their own.
+_GH_API_VALUE_LONG: Final = _o(
+    "--header", "--jq", "--template", "--hostname", "--preview", "--cache"
+)
+_GH_API_VALUE_SHORT: Final = "Hqtp"
+_GH_API_FLAG_SHORT: Final = "ih"
+_GH_API_BODY_LONG: Final = _o("--field", "--raw-field", "--input")
+_GLOB_START: Final = "-~*?[{"
+_GLOB_SPLIT_RE: Final = re.compile(r"[*?\[{]")
+
+
+def _api_word_ok(word: Word, *, endpoint: bool = False) -> bool:
+    """A `gh api` word whose run-time value can't become an option or another endpoint.
+
+    `$…` never. An unquoted glob (`repos/o/r/commits?per_page=5`, F-CL1) only
+    if its first char is literal and not `-`: every expansion keeps that
+    char, so it can't turn into `-X POST`. An endpoint glob must also have a
+    `/` before its first glob char, so it can't expand to `graphql`.
+    """
+    if word.dynamic:
+        return False
+    if not word.pattern:
+        return True
+    text = word.text
+    if not text or text[0] in _GLOB_START:
+        return False
+    return not endpoint or "/" in _GLOB_SPLIT_RE.split(text, maxsplit=1)[0].strip("/")
+
+
+def _gh_api_method_ok(method: Word | None) -> bool:
+    return method is not None and method.literal and method.text.upper() == "GET"
+
+
+def _gh_api_value(value: str, opt: str) -> bool:
+    """False for a header that could switch the method (`X-HTTP-Method-Override`)."""
+    return not (opt in {"-H", "--header"} and "method" in value.casefold())
+
+
 def _gh_api(args: list[Word]) -> _Found | None:
-    """`gh api`: any non-GET method, field or body, or GraphQL is `unknown` (C59)."""
+    """`gh api` is read-only (no decision) only as a plain GET (C59, F-CL1 item 3).
+
+    Any non-GET `-X`/`--method`, a field or body (`-f`/`-F`/`--field`/
+    `--raw-field`/`--input`), GraphQL, a method-override header, an option
+    or short cluster it can't read, a second operand or an expansion that
+    could become an option is `unknown`. `--jq`/`-q` and `--template` only
+    format the output: their value may hold `|` (quoted) or a glob.
+    """
     endpoint: str | None = None
+    options_done = False
     i = 0
     while i < len(args):
         word = args[i]
         text = word.text
         i += 1
+        nxt = args[i] if i < len(args) else None
+        if options_done or not text.startswith("-") or text == "-":
+            if not _api_word_ok(word, endpoint=True) or endpoint is not None:
+                return _UNKNOWN  # an expansion, or a second operand (gh takes one)
+            endpoint = text
+            continue
         if not word.literal:
             return _UNKNOWN
+        if text == "--":
+            options_done = True
+            continue
         opt, eq, value = text.partition("=")
-        if opt in {"-X", "--method"}:
-            method = value if eq else (args[i].text if i < len(args) else "")
-            i += 0 if eq else 1
-            if method.upper() != "GET":
+        if opt.startswith("--"):
+            if opt in _GH_API_BODY_LONG:
                 return _UNKNOWN
-        elif text.startswith("-X"):
-            if text[2:].upper() != "GET":
-                return _UNKNOWN
-        elif opt in {"--field", "--raw-field", "--input"} or text.startswith(("-f", "-F")):
+            if opt == "--method":
+                if not _gh_api_method_ok(Word(value) if eq else nxt):
+                    return _UNKNOWN
+                i += 0 if eq else 1
+            elif opt in _GH_API_VALUE_LONG:
+                if not eq:
+                    if nxt is None or not _api_word_ok(nxt):
+                        return _UNKNOWN
+                    value = nxt.text
+                    i += 1
+                if not _gh_api_value(value, opt):
+                    return _UNKNOWN
+            elif eq:
+                return _UNKNOWN  # a long option with a value we don't know
+            continue  # --paginate, --slurp, --silent, --verbose, --include, ...
+        consumed = _gh_api_short(text, nxt)
+        if consumed is None:
             return _UNKNOWN
-        elif not text.startswith("-") and endpoint is None:
-            endpoint = text
+        i += consumed
     if endpoint is not None and endpoint.strip("/").casefold() == "graphql":
         return _UNKNOWN
     return None
+
+
+def _gh_api_short(text: str, nxt: Word | None) -> int | None:
+    """Read one short-option cluster (`-i`, `-XGET`, `-q .x`, `-iq`); words used, None = unknown."""
+    for k, ch in enumerate(text[1:], start=1):
+        if ch in _GH_API_FLAG_SHORT:
+            continue
+        rest = text[k + 1 :]
+        if ch in "fF":
+            return None  # a field: the request gets a body (POST by default)
+        if ch == "X":
+            return (0 if rest else 1) if _gh_api_method_ok(Word(rest) if rest else nxt) else None
+        if ch in _GH_API_VALUE_SHORT:
+            if rest:
+                return 0 if _gh_api_value(rest, f"-{ch}") else None
+            if nxt is None or not _api_word_ok(nxt) or not _gh_api_value(nxt.text, f"-{ch}"):
+                return None
+            return 1
+        return None  # a short option we don't know
+    return 0
 
 
 _MERGE_VALUE_OPTS: Final = _o(

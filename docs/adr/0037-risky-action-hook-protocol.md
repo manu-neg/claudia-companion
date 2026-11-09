@@ -27,6 +27,13 @@
 - **Variable setters** (`read`, `printf -v`, `mapfile`, `for`) count like assignments without needing `set -a`; gh config/host env makes gh `unknown` (fixcheck-b-4).
 - **Preflight:** broad allow = also a Bash rule for a shell/interpreter/wrapper/opaque runner, or Edit/Write over `/`, `/root`, `/etc`, `/opt` (fixcheck-b-5); managed drop-ins listed again each run, unlistable → refuse (newcode-3); the hook script + the package files it imports are pinned by SHA-256 at start (source only; not `__pycache__`/`.pth`, Known limitations).
 
+## Amendment (F-CL1, Claudia permission problems 2026-11-09)
+- **Context:** a run (root, same login as the owner's coding sessions) loaded the owner's `~/.claude/CLAUDE.md`, followed its "send a Telegram `failed` alert" rule and scripted the dashboard MCP server over stdio; a read-only `gh api …?per_page=5 --jq "…|…"` was `unknown`; her first reply got a 400.
+- **Isolation, not the hook:** every `claude` child gets `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` + `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` (C49, start refused without them). Rejected: `--bare` (skips the OAuth subscription login), a separate `CLAUDE_CONFIG_DIR` (the credentials live in root's). Plus a fixed `--append-system-prompt` with the host rules (C51).
+- **`dashboard_bypass` deny:** Bash naming the MCP server, the venv's programs, the admin socket, token files, the package or a CLI call, and file writes whose content does, are denied before classification with a fixed reason pointing her to the reply; no target, so never approvable. The hook command still never forwards file content: it scans it with a copy of the domain pattern (equality tested; the hook stays stdlib-only) and forwards one boolean it computes itself. Protected settings/hook paths stay `settings_edit`.
+- **`gh api` read-only:** parsed option by option (value options, short clusters, `--`); an unquoted glob is accepted only where no expansion can start with `-` or turn the endpoint into `graphql`.
+- **Consequence:** text matching is advisory against deliberate obfuscation (C59 already says so); false positives (a command that merely mentions the admin socket or token files) are denied, fail closed.
+
 ## Consequences
 - A host that is down, slow or restarted denies every hooked call (including harmless ones) until it is back: availability traded for fail-closed.
 - The host must call `begin_run`/`end_run` around every run (M5b); without it every hooked call is denied.

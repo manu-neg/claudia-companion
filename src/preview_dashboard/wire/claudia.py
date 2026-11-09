@@ -92,7 +92,7 @@ _MESSAGE_FIELDS: Final = frozenset(
         "handled_at",
     }
 )
-_REPLY_OPTIONAL: Final = frozenset({"message_id", "item_id"})
+_REPLY_OPTIONAL: Final = frozenset({"message_id", "item_id", "ping"})
 
 
 def message_handled_path(message_id: str) -> str:
@@ -265,30 +265,50 @@ def parse_messages_envelope(raw: object) -> list[OwnerMessage]:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ReplyRequest:
-    """Body of `POST /v1/claudia/replies`: text plus optional inbox message and item link."""
+    """Body of `POST /v1/claudia/replies`: text plus optional inbox message and item link.
+
+    `ping`: a host progress ping (F-CL2): fixed text only, needs `message_id`,
+    no item link, its own budget.
+    """
 
     text: str
     message_id: str | None = None
     item_id: str | None = None
+    ping: bool = False
 
 
 def reply_request_to_json(request: ReplyRequest) -> dict[str, object]:
-    """`{"text", "message_id", "item_id"}` (nulls kept)."""
-    return {"text": request.text, "message_id": request.message_id, "item_id": request.item_id}
+    """`{"text", "message_id", "item_id"}` (nulls kept), plus `"ping": true` for a ping."""
+    body: dict[str, object] = {
+        "text": request.text,
+        "message_id": request.message_id,
+        "item_id": request.item_id,
+    }
+    if request.ping:
+        body["ping"] = True
+    return body
 
 
 def parse_reply_request(raw: object) -> ReplyRequest:
     """Parse a reply body (shape only; the admin validates text, ids and budget).
 
     Raises:
-        ValidationError: missing/unknown fields or non-string values.
+        ValidationError: missing/unknown fields, non-string values, a non-boolean
+            `ping`, or a ping without `message_id` or with `item_id`.
     """
     fields = _object(raw, "reply", frozenset({"text"}), _REPLY_OPTIONAL)
-    return ReplyRequest(
+    ping = fields.get("ping", False)
+    if not isinstance(ping, bool):
+        raise ValidationError("ping must be a boolean")
+    request = ReplyRequest(
         text=_str(fields["text"], "text"),
         message_id=_optional_str(fields.get("message_id"), "message_id"),
         item_id=_optional_str(fields.get("item_id"), "item_id"),
+        ping=ping,
     )
+    if ping and (request.message_id is None or request.item_id is not None):
+        raise ValidationError("a ping needs message_id and takes no item_id")
+    return request
 
 
 def reply_result_to_json(reply_id: str) -> dict[str, object]:

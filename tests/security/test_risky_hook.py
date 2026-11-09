@@ -757,6 +757,28 @@ def test_c59_host_state_outside_work_is_protected(raw: str, cwd: str) -> None:
     assert action.kind is ActionKind.SETTINGS_EDIT
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo 'be rude' > /var/lib/claudia-kb/persona.md",
+        "sed -i s/a/b/ /var/lib/claudia-kb/persona.md",
+        "cp /tmp/x /var/lib/claudia-kb/notes/a.md",
+        "cd /var/lib/claudia-kb && echo x > persona.md",
+        "echo x > ../persona.md",  # place unknown (`..`): judged by the name
+    ],
+)
+def test_c59_bash_writing_the_kb_or_persona_needs_approval(command: str) -> None:
+    action = ra.classify_bash(command, CWD)
+    assert action is not None
+    assert action.kind is ActionKind.SETTINGS_EDIT
+
+
+def test_c59_kb_root_is_protected_for_edit_tools_too() -> None:
+    action = ra.classify_tool_call("Write", {"file_path": "/var/lib/claudia-kb/persona.md"}, CWD)
+    assert action is not None
+    assert action.kind is ActionKind.SETTINGS_EDIT
+
+
 def test_c59_host_work_dir_is_hers() -> None:
     assert not ra.is_protected_path("/var/lib/claudia-host/work/notes.md")
     work = ra.CLAUDIA_HOST_WORK_DIR

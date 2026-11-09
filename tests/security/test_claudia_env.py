@@ -19,6 +19,7 @@ import preview_dashboard.interfaces.claudia.main as host_main
 from preview_dashboard.adapters.claude_cli import (
     ALLOWED_ENV,
     FORBIDDEN_ENV,
+    ISOLATION_ENV,
     ApiCredentialError,
     ClaudeCliConfig,
     CliClaudeRunner,
@@ -108,7 +109,8 @@ def test_c49_child_env_is_allowlist_only() -> None:
         **dict.fromkeys(FORBIDDEN_ENV, PLANTED_VALUE),
     }
     env = child_env(source)
-    assert set(env) <= {*ALLOWED_ENV, "XDG_RUNTIME_DIR"}
+    # Plus the fixed F-CL1 isolation variables (set, never inherited).
+    assert set(env) <= {*ALLOWED_ENV, "XDG_RUNTIME_DIR", *ISOLATION_ENV}
     assert PLANTED_VALUE not in env.values()
     assert env["HOME"] == "/root"
 

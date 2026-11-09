@@ -1,6 +1,7 @@
 """Claudia host process entry point (ADR 0031, units M4b + M5b; C46, C49-C53, C55, C58-C60).
 
-Start-up refuses (exit 2) with any API credential variable set (C49), an
+Start-up refuses (exit 2) with any API credential variable set (C49), a run
+env that would load the owner's CLAUDE.md / auto memory (F-CL1), an
 unsafe/incomplete host settings file or a settings source that switches
 the hooks off (C50, C59), an unsafe MCP config (C51, C53), an unsafe
 `claudia` token file (C12/C45), an untrusted admin socket (C30), an unsafe
@@ -8,7 +9,8 @@ hook socket directory (C59), an unusable knowledge base or (with
 `--require-run-cgroups`) no delegated cgroup for per-run cgroups (C58). A KB
 halt persisted in the state dir is read at start (the host starts halted). `build_host`
 wires the screen pipeline (C48), the hook gate + control socket (C59/C60),
-the approval flow (C46/C55), KB commits (C53) and voice replies (C56).
+the approval flow (C46/C55), KB commits (C53), voice replies (C56), the
+persona loader and the host progress pings (F-CL2).
 Then two threads: the **poller** long-polls the inbox, claims each message
 (handled CAS: processed once) and runs `/stop` `/status` `/voice` at once
 (so `/stop` works while a run is busy); the **worker** runs everything
@@ -37,7 +39,10 @@ from preview_dashboard.adapters.claude_cli import (
     ClaudeCliConfig,
     CliClaudeRunner,
     RunCgroups,
+    RunIsolationError,
     UuidWindowIds,
+    check_run_isolation,
+    child_env,
     delegated_cgroup_root,
     refuse_api_credentials,
 )
@@ -55,7 +60,9 @@ from preview_dashboard.application.claudia.approval_flow import ApprovalFlow, De
 from preview_dashboard.application.claudia.audit import PeerAudit
 from preview_dashboard.application.claudia.hook_gate import HookGate
 from preview_dashboard.application.claudia.kb import KbService
-from preview_dashboard.application.claudia.runs import ClaudiaHost
+from preview_dashboard.application.claudia.persona import PersonaLoader
+from preview_dashboard.application.claudia.pings import ProgressPings
+from preview_dashboard.application.claudia.runs import HOST_RULES_PROMPT, ClaudiaHost
 from preview_dashboard.application.claudia.screening import ScreenPipeline
 from preview_dashboard.application.claudia.voice import VoiceComposer
 from preview_dashboard.application.claudia.windows import (
@@ -193,10 +200,13 @@ def startup_checks(
 
     Raises:
         ApiCredentialError: an API credential variable is set.
+        RunIsolationError: the run env would load the owner's CLAUDE.md /
+            auto memory (F-CL1).
         HostSettingsError: the host settings or another settings source is
             unsafe, or the hook command / its interpreter is (hook-5).
     """
     refuse_api_credentials(environ)
+    check_run_isolation(child_env(environ))
     verified = load_host_settings(config.settings_file, trusted_uids=trusted_uids)
     check_settings_sources(settings_sources(config.home, config.workdir))
     # hook-5: a broken hook would let every call run unchecked; refuse at start, not first run.
@@ -435,6 +445,7 @@ def wire_host(
             settings=config.settings_file,
             workdir=config.workdir,
             recap_mcp_config=recap_config,
+            system_append=HOST_RULES_PROMPT,  # F-CL1: reply only, never alert herself
         ),
         environ,
         containment=run_containment(config, find_cgroup_root),
@@ -493,12 +504,16 @@ def wire_host(
         kb=kb,
         voice=voice_composer(config.voices_dir),
         voice_admin=admin,
+        # F-CL2: persona read through the KB at every run; host-sent progress pings.
+        persona=PersonaLoader(kb, alerts),
+        pings=ProgressPings(admin),
     )
     return HostParts(loop=HostLoop(admin, host, screen), admin=admin, control=control, host=host)
 
 
 _REFUSALS: Final = (
     ApiCredentialError,
+    RunIsolationError,
     HostSettingsError,
     TokenFileError,
     AdminSocketTrustError,

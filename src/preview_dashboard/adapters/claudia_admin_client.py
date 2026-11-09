@@ -157,6 +157,24 @@ class ClaudiaAdminClient:
             raise
         return True
 
+    def send_ping(self, text: str, *, message_id: OwnerMessageId) -> bool:
+        """`POST /v1/claudia/replies` with `ping: true` (F-CL2, own budget); False if refused.
+
+        Raises:
+            ClaudiaAdminError: transport error or an unexpected status.
+        """
+        body = wire.reply_request_to_json(
+            wire.ReplyRequest(text=text, message_id=message_id, ping=True)
+        )
+        try:
+            self._post(wire.REPLIES_PATH, body, "replies", ok=(201,))
+        except ClaudiaAdminError as exc:
+            if exc.status in _REPLY_REFUSED:
+                _log.info("progress ping refused by the admin (%s)", exc.status)
+                return False
+            raise
+        return True
+
     def report_health(self, screen: str) -> None:
         """`POST /v1/claudia/health`.
 

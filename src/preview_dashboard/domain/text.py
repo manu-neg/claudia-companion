@@ -164,6 +164,23 @@ def reject_invisible(text: str, *, name: str, keep: frozenset[str] = frozenset()
     return text
 
 
+def strip_forbidden(text: str, *, keep: frozenset[str] = frozenset()) -> str:
+    """Remove every char `reject_invisible` would refuse (blank look-alikes included).
+
+    The cleaning twin of `reject_invisible` for a sender that must pass it on
+    the first try (the Claudia host's replies, F-CL1); repeated until stable,
+    since a removal can strand a joiner or selector. No NFC, no trimming.
+    """
+    text = text.translate(_DROP_BLANK_LOOKALIKES)
+    for _ in range(8):
+        cleaned = _strip_invisible(text, keep)
+        if cleaned == text:
+            return text
+        text = cleaned
+    # Still changing after 8 passes (pathological input): drop every joiner/selector.
+    return _strip_invisible(text.translate({ord(c): None for c in _DANGLING_END}), keep)
+
+
 def sanitize_outgoing_line(raw: str, *, name: str, max_chars: int) -> str:
     """`sanitize_line` minus blank look-alikes, then `reject_links`: one clean alert line.
 

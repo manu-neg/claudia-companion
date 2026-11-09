@@ -42,6 +42,8 @@ class RunRequest:
             empty = none (fail closed, C51).
         generation: the host's `/stop` generation the turn belongs to; the runner
             refuses to spawn it once a newer stop epoch was seen (C58).
+        persona: the checked, framed persona block (F-CL2) or "" for none; the
+            runner appends it after the fixed host rules, never before.
     """
 
     window_id: WindowId
@@ -54,6 +56,7 @@ class RunRequest:
     recap: bool = False
     builtin_tools: tuple[str, ...] = ()
     generation: int = 0
+    persona: str = ""
 
     def __repr__(self) -> str:
         # The prompt is owner text: never in reprs or logs (C29).
