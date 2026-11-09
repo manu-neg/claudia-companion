@@ -4,7 +4,8 @@ The model gets exactly one tool family, the `claudia-kb` MCP server pinned
 to the KB root with `--caller gardener` (so `persona.md` is refused): no
 built-in tools (`--tools ""`), no other MCP servers (`--strict-mcp-config`),
 no settings sources, no session file, at most `MAX_TURNS` turns, subscription
-login only (the allowlisted `child_env`; API-key refusal is the caller's).
+login only (the allowlisted `child_env`; API-key refusal is the caller's),
+never the owner's CLAUDE.md files or auto memory (`ISOLATION_ENV`, F-CL1).
 When the run ends its process group gets SIGTERM, a ≤ 5 s grace, then SIGKILL.
 """
 
@@ -23,7 +24,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
 
-from preview_dashboard.adapters.claude_cli import child_env, parse_run_output
+from preview_dashboard.adapters.claude_cli import (
+    check_run_isolation,
+    child_env,
+    parse_run_output,
+)
 from preview_dashboard.ports.claudia_gardener import GardenModelRun
 
 MAX_TURNS: Final = 20
@@ -98,6 +103,7 @@ class ClaudeGardenModel:
 
     Raises (constructor):
         ValueError: a relative path or a grace outside (0, 5].
+        RunIsolationError: the child env lacks the F-CL1 isolation variables.
     """
 
     def __init__(
@@ -119,6 +125,7 @@ class ClaudeGardenModel:
         self._root = kb_root
         self._system = system_prompt
         self._env = child_env(environ)
+        check_run_isolation(self._env)  # F-CL1: never the owner's CLAUDE.md / memory
         self._timeout = timeout_s
 
     def run(self, prompt: str) -> GardenModelRun:

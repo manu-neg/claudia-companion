@@ -73,6 +73,8 @@ fail() {
     FAILURES=$((FAILURES + 1))
 }
 skip() { echo "SKIP: $*"; }
+# A warning does not fail the check (the service works; one panel is degraded).
+warn() { echo "WARN: $*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # --- config: reuse the real, validated settings loader (never a hand-rolled
@@ -496,6 +498,16 @@ check_claudia() {
     if [[ "$enabled" != "True" ]]; then
         skip "claudia_enabled = false; skipping Claudia checks"
         return
+    fi
+
+    # Without this path the viewer's approvals panel shows "can't be checked".
+    local snapshot_set
+    snapshot_set="$(python3 -c 'import json, sys; print(json.load(sys.stdin).get("claudia_approvals_snapshot_set", False))' \
+        <<<"$config_json" 2>/dev/null)" || snapshot_set="False"
+    if [[ "$snapshot_set" == "True" ]]; then
+        pass "claudia_approvals_snapshot is set (viewer approvals panel)"
+    else
+        warn "claudia_approvals_snapshot is unset: the viewer approvals panel cannot be checked (add the line from config.example.toml)"
     fi
 
     local unit

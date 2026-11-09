@@ -6,8 +6,10 @@ of the raw and normalized forms. Budget, separate from the 20/hour alert
 budget: at most 3 replies per inbox message and 120 per hour overall; a
 reply tied to no message (a background job's result) counts against the
 hourly cap only. Only valid replies use budget: one that fails to queue
-(rendered content refused, outbox down) gives its budget back. Reply text
-is never logged.
+(rendered content refused, outbox down) gives its budget back. Host
+progress pings (F-CL2, `send_ping`) are fixed texts only, with their own
+cap of 3 per message, and stop at 110/hour so the final reply always has
+budget. Reply text is never logged.
 Pure core: ports only.
 """
 
@@ -21,6 +23,7 @@ from collections.abc import Callable, Sequence
 from datetime import timedelta
 from typing import Final
 
+from preview_dashboard.application.claudia.pings import is_ping_text
 from preview_dashboard.application.notify import (
     new_ulid,
     scan_texts,
@@ -55,6 +58,11 @@ logger = logging.getLogger("preview_dashboard.replies")
 REPLY_MAX_CHARS: Final = 4096
 REPLIES_PER_MESSAGE: Final = 3
 REPLIES_PER_HOUR: Final = 120
+# F-CL2: host progress pings have their own per-message cap, so they never use
+# up the 3 replies; they count toward the hourly cap but stop at 110, leaving
+# the last 10 to real replies (never less than the message's own remaining replies).
+PINGS_PER_MESSAGE: Final = 3
+PING_HOURLY_RESERVE: Final = 10
 # Per-message counters for this many recent messages; older ones are long
 # answered (the hourly cap still bounds everything).
 _TRACKED_MESSAGES: Final = 1024
@@ -94,18 +102,21 @@ class ReplyBudget:
         self._stamps: deque[float] = deque()
         self._lock = threading.Lock()
 
-    def acquire(self) -> float:
+    def acquire(self, *, reserve: int = 0) -> float:
         """Record one use now; return its stamp (for `release`).
 
+        `reserve`: uses kept back for others (a ping leaves the last ones to
+        real replies, F-CL2): refused once `limit - reserve` are used.
+
         Raises:
-            RateLimitedError: `limit` uses already happened within the window.
+            RateLimitedError: `limit - reserve` uses already happened within the window.
         """
         with self._lock:
             now = self._monotonic()
             cutoff = now - self._window
             while self._stamps and self._stamps[0] <= cutoff:
                 self._stamps.popleft()
-            if len(self._stamps) >= self._limit:
+            if len(self._stamps) >= self._limit - max(0, reserve):
                 raise RateLimitedError("reply rate limit reached; try again later")
             self._stamps.append(now)
             return now
@@ -242,7 +253,40 @@ class ReplyService:
         self._hourly = hourly or hourly_reply_limiter()
         self._per_message = per_message
         self._counts: OrderedDict[OwnerMessageId, int] = OrderedDict()
+        self._ping_counts: OrderedDict[OwnerMessageId, int] = OrderedDict()
         self._lock = threading.Lock()
+
+    def send_ping(self, text: str, *, message_id: str) -> str:
+        """Queue one host progress ping for `message_id`; return its delivery id (F-CL2).
+
+        Only the fixed ping texts pass; own cap of 3 per message (never the
+        reply cap); counts toward the hourly cap but is refused unless the
+        replies this message may still send (and the 10-use reserve) fit
+        after it, so a ping never uses up this message's final reply.
+
+        Raises:
+            ValidationError: not a fixed ping text, or an unknown inbox message.
+            RateLimitedError: 3 pings to this message, or the hourly reserve reached.
+            StorageUnavailableError: delivery is not available.
+        """
+        if not is_ping_text(text):
+            raise ValidationError("a ping must be one of the fixed host ping texts")
+        validate_reply_text(text)
+        mid = self._known_message(message_id)
+        stamp = self._take(
+            self._ping_counts,
+            mid,
+            PINGS_PER_MESSAGE,
+            PING_HOURLY_RESERVE,
+            keep_replies_for=True,
+        )
+        try:
+            reply_id = self._outbox.queue_reply(text, item_id=None, message_id=mid)
+        except BaseException:
+            self._give_back(self._ping_counts, mid, stamp)
+            raise
+        logger.info("claudia ping queued: id=%s message=%s", reply_id, mid)
+        return reply_id
 
     def send(
         self,
@@ -291,24 +335,44 @@ class ReplyService:
         return mid
 
     def _take_budget(self, mid: OwnerMessageId | None) -> float:
+        return self._take(self._counts, mid, self._per_message, 0)
+
+    def _return_budget(self, mid: OwnerMessageId | None, stamp: float) -> None:
+        self._give_back(self._counts, mid, stamp)
+
+    def _take(
+        self,
+        counts: OrderedDict[OwnerMessageId, int],
+        mid: OwnerMessageId | None,
+        cap: int,
+        reserve: int,
+        *,
+        keep_replies_for: bool = False,
+    ) -> float:
         with self._lock:
-            used = 0 if mid is None else self._counts.get(mid, 0)
-            if used >= self._per_message:
+            used = 0 if mid is None else counts.get(mid, 0)
+            if used >= cap:
                 raise RateLimitedError("reply budget for this message is used up")
+            if keep_replies_for and mid is not None:
+                # Per message: the replies this message may still send must fit after the ping.
+                left = self._per_message - self._counts.get(mid, 0)
+                reserve = max(reserve, left, 1)
             try:
-                stamp = self._hourly.acquire()
+                stamp = self._hourly.acquire(reserve=reserve)
             except RateLimitedError:
                 raise RateLimitedError("hourly reply budget is used up; try again later") from None
             if mid is not None:
-                self._counts[mid] = used + 1
-                self._counts.move_to_end(mid)
-                while len(self._counts) > _TRACKED_MESSAGES:
-                    self._counts.popitem(last=False)
+                counts[mid] = used + 1
+                counts.move_to_end(mid)
+                while len(counts) > _TRACKED_MESSAGES:
+                    counts.popitem(last=False)
             return stamp
 
-    def _return_budget(self, mid: OwnerMessageId | None, stamp: float) -> None:
+    def _give_back(
+        self, counts: OrderedDict[OwnerMessageId, int], mid: OwnerMessageId | None, stamp: float
+    ) -> None:
         with self._lock:
             self._hourly.release(stamp)
-            used = 0 if mid is None else self._counts.get(mid, 0)
+            used = 0 if mid is None else counts.get(mid, 0)
             if mid is not None and used > 0:
-                self._counts[mid] = used - 1
+                counts[mid] = used - 1

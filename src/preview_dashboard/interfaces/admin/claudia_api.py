@@ -136,13 +136,22 @@ async def mark_handled(request: Request, message_id: str) -> JSONResponse:
 
 @router.post("/replies")
 async def post_reply(request: Request) -> JSONResponse:
-    """Queue one reply (<= 4096 chars; 3 per inbox message, 120 per hour, C56)."""
+    """Queue one reply (<= 4096 chars; 3 per inbox message, 120 per hour, C56).
+
+    `"ping": true` = a host progress ping (F-CL2): fixed texts only, own cap
+    of 3 per message, refused once the hour has used 110.
+    """
     require_claudia(request)
     body = parse_reply_request(await read_json_object(request))
     claudia = claudia_core(request)
-    reply_id = await run_blocking(
-        lambda: claudia.replies.send(body.text, message_id=body.message_id, item_id=body.item_id)
-    )
+    message_id = body.message_id
+    if body.ping and message_id is not None:
+        mid = message_id
+        reply_id = await run_blocking(lambda: claudia.replies.send_ping(body.text, message_id=mid))
+    else:
+        reply_id = await run_blocking(
+            lambda: claudia.replies.send(body.text, message_id=message_id, item_id=body.item_id)
+        )
     return JSONResponse(reply_result_to_json(reply_id), status_code=201, headers=NO_STORE)
 
 

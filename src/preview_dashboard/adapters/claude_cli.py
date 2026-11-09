@@ -2,12 +2,14 @@
 
 `refuse_api_credentials` makes the host refuse to start with any API
 credential variable set (subscription only, D15/C49); every `claude` child
-gets `child_env` (allowlist, never the inherited environment). Run argv
+gets `child_env` (allowlist, never the inherited environment, plus the fixed
+variables that keep the owner's CLAUDE.md and auto memory out, F-CL1). Run argv
 comes from one fixed template (C51): `-p --permission-mode auto
 --strict-mcp-config --mcp-config <host> --settings <host> --tools <exact
 built-ins>` plus the host's tool set and window id (a recap run swaps in the
-host's recap MCP config); the prompt goes to stdin (never argv, so owner
-text can't become a flag). Each run gets its own process group and, under
+host's recap MCP config) and one `--append-system-prompt`: the host rules,
+then the run's checked persona (F-CL2); the prompt goes to stdin (never
+argv, so owner text can't become a flag). Each run gets its own process group and, under
 the host unit's delegated cgroup, its own cgroup, so `/stop` kills it and
 everything it left behind, detached jobs included (C58, host-flow-5);
 spawn and `/stop` share one lock and a stop epoch, so a run queued before
@@ -50,6 +52,14 @@ FORBIDDEN_ENV: Final = (
 ALLOWED_ENV: Final = ("HOME", "PATH", "LANG", "LC_ALL", "TERM", "TZ", "USER", "LOGNAME")
 _OPTIONAL_ENV: Final = ("XDG_RUNTIME_DIR",)
 DEFAULT_PATH: Final = "/usr/local/bin:/usr/bin:/bin"
+# F-CL1: runs share root's login with the owner's coding sessions; these keep the
+# owner's CLAUDE.md files (user, project) and auto memory out of every run. Set
+# explicitly, never inherited. Not `--bare` (it skips the OAuth login) and not
+# CLAUDE_CONFIG_DIR (the credentials live there).
+ISOLATION_ENV: Final[Mapping[str, str]] = {
+    "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1",
+    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+}
 
 DEFAULT_RUN_TIMEOUT: Final = 30 * 60.0
 MAX_OUTPUT_BYTES: Final = 4 * 1024 * 1024
@@ -97,15 +107,32 @@ def refuse_api_credentials(environ: Mapping[str, str]) -> None:
             )
 
 
+class RunIsolationError(RuntimeError):
+    """A `claude` child env would load the owner's CLAUDE.md / auto memory (F-CL1)."""
+
+
 def child_env(environ: Mapping[str, str]) -> dict[str, str]:
-    """The environment of every `claude` child: allowlisted names only (C49).
+    """The environment of every `claude` child: allowlisted names plus `ISOLATION_ENV` (C49).
 
     PATH falls back to a fixed default; nothing else is ever inherited, so no
-    key, token or token-file path reaches a run.
+    key, token or token-file path reaches a run. The isolation variables are
+    always set to their fixed values (F-CL1).
     """
     env = {name: environ[name] for name in (*ALLOWED_ENV, *_OPTIONAL_ENV) if name in environ}
     env.setdefault("PATH", DEFAULT_PATH)
+    env.update(ISOLATION_ENV)
     return env
+
+
+def check_run_isolation(env: Mapping[str, str]) -> None:
+    """Refuse an env that would let a run load CLAUDE.md files or auto memory (F-CL1).
+
+    Raises:
+        RunIsolationError: naming the first variable missing or not at its fixed value.
+    """
+    for name, value in ISOLATION_ENV.items():
+        if env.get(name) != value:
+            raise RunIsolationError(f"{name} is not {value} in the run environment (F-CL1)")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -124,6 +151,8 @@ class ClaudeCliConfig:
     max_output_bytes: int = MAX_OUTPUT_BYTES
     # Same servers, `claudia-kb --caller recap` (written by the host at start, M5b).
     recap_mcp_config: Path | None = None
+    # The host's fixed rules (F-CL1), passed as `--append-system-prompt`; "" = none.
+    system_append: str = ""
 
     def __post_init__(self) -> None:
         for name in ("claude_bin", "mcp_config", "settings", "workdir"):
@@ -141,6 +170,19 @@ def _tool_list(tools: Sequence[str]) -> str:
         if not _TOOL_RE.fullmatch(tool):
             raise ValueError("invalid tool name in a tool set")
     return ",".join(tools)
+
+
+def system_append_text(host_rules: str, persona: str) -> str:
+    """The `--append-system-prompt` text: host rules first, then the persona (F-CL2).
+
+    The persona is tone only and always comes after the rules it must never
+    override. A persona naming a forbidden flag spelling is dropped (logged)
+    rather than failing the run on the argv check below.
+    """
+    if persona and any(flag in persona for flag in FORBIDDEN_FLAGS):
+        _log.warning("persona not used (forbidden_flag)")
+        persona = ""
+    return "\n\n".join(part for part in (host_rules, persona) if part)
 
 
 def build_run_argv(config: ClaudeCliConfig, request: RunRequest) -> list[str]:
@@ -185,6 +227,10 @@ def build_run_argv(config: ClaudeCliConfig, request: RunRequest) -> list[str]:
         "--resume" if request.resume else "--session-id",
         window,
     ]
+    append = system_append_text(config.system_append, request.persona)
+    if append:
+        # `=` form: a fixed host text, never read as another option.
+        argv.append(f"--append-system-prompt={append}")
     if any(flag in arg for arg in argv for flag in FORBIDDEN_FLAGS):
         raise ValueError("forbidden flag in run argv")  # unreachable by construction
     return argv
@@ -445,6 +491,9 @@ class CliClaudeRunner:
             be placed in its own cgroup is refused, and `/stop`/`busy()` go by
             the cgroup; None (no delegated cgroup, tests) = process groups
             plus the `/proc` descendant sweep.
+
+    Raises (constructor):
+        RunIsolationError: the child env lacks the F-CL1 isolation variables.
     """
 
     def __init__(
@@ -456,6 +505,7 @@ class CliClaudeRunner:
     ) -> None:
         self._config = config
         self._env = child_env(environ)
+        check_run_isolation(self._env)  # never a run that loads the owner's CLAUDE.md
         self._containment = containment
         self._lock = threading.Lock()
         # pgid -> True while its run is in progress; finished runs whose group

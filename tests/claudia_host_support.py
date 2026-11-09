@@ -19,6 +19,8 @@ from pathlib import Path
 from preview_dashboard.adapters.secret_scan import RegexSecretScanner
 from preview_dashboard.application.claudia.approval_flow import ApprovalFlow, DenialRecorder
 from preview_dashboard.application.claudia.audit import PeerAudit
+from preview_dashboard.application.claudia.persona import PersonaLoader
+from preview_dashboard.application.claudia.pings import ProgressPings
 from preview_dashboard.application.claudia.runs import ClaudiaHost
 from preview_dashboard.application.claudia.voice import VoiceComposer
 from preview_dashboard.application.claudia.windows import WindowTracker
@@ -411,7 +413,13 @@ class HostRig:
     voice_admin: FakeVoiceAdmin
 
 
-def host_rig(*, voice: VoiceComposer | None = None, **overrides: object) -> HostRig:
+def host_rig(
+    *,
+    voice: VoiceComposer | None = None,
+    persona: PersonaLoader | None = None,
+    pings: ProgressPings | None = None,
+    **overrides: object,
+) -> HostRig:
     """Build a host over fakes; keyword overrides replace a fake (same names as fields)."""
     clock = overrides.pop("clock", None) or FixedClock()
     assert isinstance(clock, FixedClock)
@@ -457,6 +465,8 @@ def host_rig(*, voice: VoiceComposer | None = None, **overrides: object) -> Host
         kb=parts["kb"],  # type: ignore[arg-type]
         voice=voice,
         voice_admin=parts["voice_admin"],  # type: ignore[arg-type]
+        persona=persona,
+        pings=pings,
     )
     return HostRig(
         host=host,

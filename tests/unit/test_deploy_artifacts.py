@@ -2402,6 +2402,14 @@ def test_uninstall_sh_removes_claudia_units_groups_and_data() -> None:
         assert expected in out, expected
 
 
+def test_check_sh_warns_when_claudia_approvals_snapshot_is_unset() -> None:
+    """The viewer's approvals panel needs the snapshot path; a missing one warns (F-CL2b)."""
+    text = CHECK_SH.read_text()
+    assert "claudia_approvals_snapshot_set" in text
+    assert 'warn "claudia_approvals_snapshot is unset' in text
+    assert "claudia_approvals_snapshot" in (DEPLOY_DIR.parent / "docs/operations.md").read_text()
+
+
 def test_check_sh_covers_claudia_when_enabled() -> None:
     """Static coverage of the live Claudia checks (never run here)."""
     text = CHECK_SH.read_text()

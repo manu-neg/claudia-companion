@@ -451,6 +451,8 @@ def cmd_check_config(args: argparse.Namespace, out: TextIO) -> int:
                 report["claudia_credentials_file"] = str(exc)
                 status = EXIT_FAILED
     report["claudia_enabled"] = settings.claudia_enabled
+    # Names only: check.sh warns when Claudia is on but the viewer panel has no snapshot path.
+    report["claudia_approvals_snapshot_set"] = settings.claudia_approvals_snapshot is not None
     json.dump(report, out, sort_keys=True, indent=2)
     out.write("\n")
     return status

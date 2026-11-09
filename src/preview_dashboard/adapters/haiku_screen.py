@@ -18,6 +18,7 @@ import subprocess  # nosec B404  # the claude CLI; fixed argv, never a shell
 import tempfile
 from collections.abc import Mapping
 
+from preview_dashboard.adapters.claude_cli import ISOLATION_ENV
 from preview_dashboard.domain.screen_rules import (
     MAX_MODEL_OUTPUT_CHARS,
     ModelRun,
@@ -66,8 +67,14 @@ def screen_argv(claude_bin: str, system_prompt: str) -> list[str]:
 
 
 def child_env(source: Mapping[str, str]) -> dict[str, str]:
-    """Allowlisted copy of `source` (C49): only `ENV_ALLOWLIST` names, nothing inherited."""
-    return {name: source[name] for name in ENV_ALLOWLIST if name in source}
+    """Allowlisted copy of `source` (C49) plus the fixed `ISOLATION_ENV` (F-CL1).
+
+    Only `ENV_ALLOWLIST` names are inherited; the isolation variables keep the
+    owner's CLAUDE.md files and auto memory out of the screen's context.
+    """
+    env = {name: source[name] for name in ENV_ALLOWLIST if name in source}
+    env.update(ISOLATION_ENV)
+    return env
 
 
 class HaikuScreenRunner:

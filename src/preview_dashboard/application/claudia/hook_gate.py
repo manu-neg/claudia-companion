@@ -9,8 +9,10 @@ earlier call used: one approval covers **one** call (orchestrator decision,
 backlog §15.2) and its cover ends with the run. `SendMessage` needs the
 peer prefix, and for an interactive or unknown session a `peer_message`
 approval for that session (C60). A tool it does not know, malformed
-input, no run in progress or another session id: deny (fail closed).
-Framework-free; thread-safe.
+input, no run in progress or another session id: deny (fail closed). A
+call that would reach the owner past the host (dashboard MCP server, CLI,
+admin socket; `domain/dashboard_bypass.py`, F-CL1) is denied as
+`dashboard_bypass`, never approvable. Framework-free; thread-safe.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from preview_dashboard.domain.approvals import (
     normalize_action_target,
     parse_window_id,
 )
+from preview_dashboard.domain.dashboard_bypass import DASHBOARD_BYPASS_LABEL, is_dashboard_bypass
 from preview_dashboard.domain.errors import ValidationError
 from preview_dashboard.domain.risky_actions import (
     SEND_MESSAGE_TOOL,
@@ -82,6 +85,11 @@ REASON_NO_RUN: Final = "no Claudia run in progress for this session"
 REASON_ERROR: Final = "hook check failed"
 REASON_PEER_PREFIX: Final = "peer_message: text must start with the Claudia prefix"
 REASON_UNKNOWN_TOOL: Final = "unknown: this tool is not available in Claudia runs"
+# <= 160 chars of the hook's reason charset (interfaces/claudia/hook.py).
+REASON_DASHBOARD_BYPASS: Final = (
+    "dashboard_bypass: reach the owner only through your reply, never via the dashboard "
+    "MCP server, CLI, admin socket or Telegram. Say what you need in the reply"
+)
 
 
 def needs_approval(label: str) -> str:
@@ -213,6 +221,12 @@ class HookGate:
             # new built-in that runs commands) could act without any check.
             self._record(run, "hook_deny", UNKNOWN_LABEL, None, reason="unknown_tool")
             return HookDecision.deny(REASON_UNKNOWN_TOOL)
+        if is_dashboard_bypass(call.tool_name, call.tool_input):
+            # F-CL1: she reaches the owner only through her reply; no target, so
+            # no approval can ever cover it.
+            self._record(run, "hook_deny", DASHBOARD_BYPASS_LABEL, None, reason="dashboard_bypass")
+            _log.info("hook: %s denied", DASHBOARD_BYPASS_LABEL)
+            return HookDecision.deny(REASON_DASHBOARD_BYPASS)
         action = classify_tool_call(
             call.tool_name, call.tool_input, call.cwd, realpath=self._realpath
         )
@@ -302,6 +316,7 @@ class HookGate:
 
 __all__ = [
     "HOOK_EVENT",
+    "REASON_DASHBOARD_BYPASS",
     "REASON_MALFORMED",
     "REASON_NO_RUN",
     "REASON_PEER_PREFIX",

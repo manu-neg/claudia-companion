@@ -1,6 +1,7 @@
 """Entry point of the weekly KB gardener (systemd timer, unit M9; docs/security.md C54).
 
-Refuses to start with any API credential variable set (C49), commits the KB
+Refuses to start with any API credential variable set (C49) or a run env
+that would load the owner's CLAUDE.md / auto memory (F-CL1), commits the KB
 as baseline, runs the free pre-pass and, only if it found something, the
 confined Haiku pass (`application/claudia/garden.py`). Afterwards it posts one
 dashboard summary item and one `done`/`failed` alert through the admin API.
@@ -20,7 +21,13 @@ from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Final
 
-from preview_dashboard.adapters.claude_cli import ApiCredentialError, refuse_api_credentials
+from preview_dashboard.adapters.claude_cli import (
+    ApiCredentialError,
+    RunIsolationError,
+    check_run_isolation,
+    child_env,
+    refuse_api_credentials,
+)
 from preview_dashboard.adapters.gardener_runner import ClaudeGardenModel
 from preview_dashboard.adapters.kb_git import GitKbHistory
 from preview_dashboard.adapters.kb_store import FsKbStore
@@ -116,9 +123,10 @@ def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] | None = 
     args = parse_args(argv)
     try:
         refuse_api_credentials(env)  # before anything else: D15/C49
+        check_run_isolation(child_env(env))  # F-CL1: no CLAUDE.md / auto memory in runs
         gid = verify_admin_socket(args.socket)
         token = load_admin_token(args.token_file, trusted_gids=(gid,))
-    except (ApiCredentialError, AdminSocketTrustError, TokenFileError) as exc:
+    except (ApiCredentialError, RunIsolationError, AdminSocketTrustError, TokenFileError) as exc:
         _log.error("refusing to start: %s", exc)  # names a variable or file, never a value
         return EXIT_REFUSED
     client = AdminClient(args.socket, token)

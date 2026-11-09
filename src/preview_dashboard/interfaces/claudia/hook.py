@@ -7,7 +7,9 @@ control socket (5 s budget) and prints only a `deny` answer, or nothing
 (exit 0) so the permission guard decides. It never grants. Any failure
 (bad input, host down, timeout, odd reply, crash) is a deny: exit 2
 (Claude Code blocks on it) plus the deny JSON. Stdlib only, so it starts
-fast and cannot break on a heavy import.
+fast and cannot break on a heavy import. File content is never forwarded:
+only whether it references the dashboard's MCP server / CLI / admin socket
+(F-CL1, `dashboard_bypass`).
 """
 
 from __future__ import annotations
@@ -45,6 +47,36 @@ FORWARDED_KEYS: Final = frozenset(
 )
 _TOP_KEYS: Final = ("session_id", "cwd", "hook_event_name", "tool_name")
 _REASON_RE: Final = re.compile(r"[A-Za-z0-9_ :,./()-]{1,160}")
+# F-CL1: file content stays here; only whether it references the dashboard's
+# MCP server / CLI / venv / admin socket goes to the host. Equal to
+# `domain.dashboard_bypass.REFERENCE_PATTERN` (test): this module stays stdlib-only.
+CONTENT_REFERENCE_PATTERN: Final = (
+    r"preview-dashboard-mcp"
+    r"|/opt/preview-dashboard/\.venv/bin\b(?!/preview-dashboard-claudia-hook\b)"
+    r"|/run/preview-dashboard\b"
+    r"|/etc/preview-dashboard/[\w.-]*\.(?:token|secret)\b"
+    r"|\badmin\.sock\b"
+    r"|(?:-m\s*|\bimport\s+|\bfrom\s+)preview_dashboard\b"
+    r"|\bpreview_dashboard\.interfaces\b"
+    r"|\bdashboard_(?:notify|ask|wait_answer|cancel_question)\b"
+    r"|preview-dashboard[\"',\s\]]+(?:notify|question|ask)\b"
+)
+_CONTENT_REFERENCE_RE: Final = re.compile(CONTENT_REFERENCE_PATTERN, re.IGNORECASE)
+CONTENT_KEYS: Final = ("content", "new_string", "new_source")
+WRITES_REFERENCE_KEY: Final = "writes_dashboard_reference"
+
+
+def _written_texts(tool_input: Mapping[str, object]) -> list[str]:
+    """The texts a file write would put on disk (Write, Edit, NotebookEdit, MultiEdit)."""
+    texts = [v for k in CONTENT_KEYS if isinstance(v := tool_input.get(k), str)]
+    edits = tool_input.get("edits")  # MultiEdit
+    if isinstance(edits, list):
+        for edit in edits:
+            text = edit.get("new_string") if isinstance(edit, dict) else None
+            if isinstance(text, str):
+                texts.append(text)
+    return texts
+
 
 REASON_BAD_INPUT: Final = "hook input unreadable"
 REASON_HOST_DOWN: Final = "Claudia host unreachable"
@@ -99,6 +131,9 @@ def trim_call(raw: bytes) -> dict[str, object]:
         elif isinstance(value, str) and len(value) > MAX_COMMAND_CHARS:
             raise HookDeniedError(REASON_BAD_INPUT)
         kept[key] = value
+    # Computed here, never copied from the input (not in FORWARDED_KEYS).
+    if any(_CONTENT_REFERENCE_RE.search(text) for text in _written_texts(tool_input)):
+        kept[WRITES_REFERENCE_KEY] = True
     call["tool_input"] = kept
     return call
 
