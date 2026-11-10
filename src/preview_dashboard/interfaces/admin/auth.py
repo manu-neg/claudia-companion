@@ -1,11 +1,12 @@
-"""Admin API authentication: three scoped tokens, peer credentials (token loading re-exported).
+"""Admin API authentication: four scoped tokens, peer credentials (token loading re-exported).
 
 Tokens are read once at startup from files that must be private (C12, C36,
 C45); every request must carry one as `Authorization: Bearer <token>`,
 compared in constant time. Each token is valid on exactly one route family:
 the notifier token on `/v1/notifier/*`, the `claudia` token on
-`/v1/claudia/*`, the admin token everywhere else; never cross-accepted
-(403, C33/C34/C45). The Unix socket peer's uid (`SO_PEERCRED`) is attached
+`/v1/claudia/*`, the viewer token on `/v1/viewer/*` (dashboard decisions,
+F-CL6), the admin token everywhere else; never cross-accepted
+(403, C33/C34/C45/C46). The Unix socket peer's uid (`SO_PEERCRED`) is attached
 to each request, logged, and optionally restricted to an allowlist per
 route family (C26). No token nor the Authorization header is ever logged.
 """
@@ -34,6 +35,7 @@ from preview_dashboard.interfaces.token_file import (
 )
 from preview_dashboard.wire.claudia import CLAUDIA_PREFIX
 from preview_dashboard.wire.notifier import NOTIFIER_PREFIX
+from preview_dashboard.wire.viewer_decisions import VIEWER_PREFIX
 
 __all__ = [
     "ADMIN_ROLE",
@@ -42,6 +44,7 @@ __all__ = [
     "MIN_TOKEN_CHARS",
     "NOTIFIER_ROLE",
     "ROLE_KEY",
+    "VIEWER_ROLE",
     "BearerAuthMiddleware",
     "PeerCredentials",
     "PeerCredentialsApp",
@@ -50,6 +53,7 @@ __all__ = [
     "TokenVerifier",
     "is_claudia_path",
     "is_notifier_path",
+    "is_viewer_path",
     "load_admin_token",
     "peer_of",
     "read_peer_credentials",
@@ -66,6 +70,7 @@ ROLE_KEY = "pdash.token_role"
 ADMIN_ROLE = "admin"
 NOTIFIER_ROLE = "notifier"
 CLAUDIA_ROLE = "claudia"
+VIEWER_ROLE = "viewer"
 
 
 def _under(path: str, prefix: str) -> bool:
@@ -86,17 +91,24 @@ def is_claudia_path(path: str) -> bool:
     return _under(path, CLAUDIA_PREFIX)
 
 
+def is_viewer_path(path: str) -> bool:
+    """True for the viewer route family (`/v1/viewer` and below, F-CL6), like `is_notifier_path`."""
+    return _under(path, VIEWER_PREFIX)
+
+
 def route_family(path: str) -> str:
-    """The token role a path needs: `notifier`, `claudia` or (everything else) `admin`."""
+    """The token role a path needs: `notifier`, `claudia`, `viewer` or (else) `admin`."""
     if is_notifier_path(path):
         return NOTIFIER_ROLE
     if is_claudia_path(path):
         return CLAUDIA_ROLE
+    if is_viewer_path(path):
+        return VIEWER_ROLE
     return ADMIN_ROLE
 
 
 def role_of(scope: Scope) -> str | None:
-    """The token role (`admin` / `notifier` / `claudia`) `BearerAuthMiddleware` attached."""
+    """The token role (`admin` / `notifier` / `claudia` / `viewer`) the middleware attached."""
     state = scope.get("state")
     value = state.get(ROLE_KEY) if isinstance(state, dict) else None
     return value if isinstance(value, str) else None
@@ -199,10 +211,10 @@ class PeerPolicyMiddleware:
     With no allowlist at all, socket file permissions (0660, group-only)
     decide who can connect (C26). Once any list is set, each route family
     has its own: `allowed_uids` for the admin routes, `notifier_uids` for
-    `/v1/notifier/*`, `claudia_uids` for `/v1/claudia/*` (an empty list
-    there = nobody), so each token only works from its own process's uid
-    (C33, C45). A request without known peer credentials is refused too
-    (fail closed).
+    `/v1/notifier/*`, `claudia_uids` for `/v1/claudia/*`, `viewer_uids`
+    for `/v1/viewer/*` (an empty list there = nobody), so each token only
+    works from its own process's uid (C33, C45, F-CL6). A request without
+    known peer credentials is refused too (fail closed).
     """
 
     def __init__(
@@ -212,12 +224,14 @@ class PeerPolicyMiddleware:
         allowed_uids: Collection[int] | None,
         notifier_uids: Collection[int] | None = None,
         claudia_uids: Collection[int] | None = None,
+        viewer_uids: Collection[int] | None = None,
     ) -> None:
         self._app = app
         self._families = {
             ADMIN_ROLE: frozenset(allowed_uids or ()),
             NOTIFIER_ROLE: frozenset(notifier_uids or ()),
             CLAUDIA_ROLE: frozenset(claudia_uids or ()),
+            VIEWER_ROLE: frozenset(viewer_uids or ()),
         }
         self._active = any(self._families.values())
 
@@ -243,8 +257,9 @@ class BearerAuthMiddleware:
     only on the first, so it can fetch/report deliveries and submit answers,
     taps and codes but never publish or ask, and the admin token can never
     answer (C33, C34); the `claudia` token (if configured) only on the
-    second (C45). The accepted role is stored in the scope (`role_of`) for
-    the routes' own check. Never logs header values.
+    second (C45); the viewer token (if configured) only on `/v1/viewer/*`,
+    the one dashboard-decision route (F-CL6). The accepted role is stored in
+    the scope (`role_of`) for the routes' own check. Never logs header values.
 
     Raises (constructor):
         ValueError: two configured tokens are the same.
@@ -257,6 +272,7 @@ class BearerAuthMiddleware:
         verifier: TokenVerifier,
         notifier_verifier: TokenVerifier | None = None,
         claudia_verifier: TokenVerifier | None = None,
+        viewer_verifier: TokenVerifier | None = None,
     ) -> None:
         if notifier_verifier is not None and verifier.same_token(notifier_verifier):
             raise ValueError("the notifier token must differ from the admin token")
@@ -265,6 +281,11 @@ class BearerAuthMiddleware:
             for other in (verifier, notifier_verifier)
         ):
             raise ValueError("the claudia token must differ from the admin and notifier tokens")
+        if viewer_verifier is not None and any(
+            other is not None and viewer_verifier.same_token(other)
+            for other in (verifier, notifier_verifier, claudia_verifier)
+        ):
+            raise ValueError("the viewer token must differ from every other token")
         self._app = app
         self._verifiers: tuple[tuple[str, TokenVerifier], ...] = tuple(
             (role, v)
@@ -272,6 +293,7 @@ class BearerAuthMiddleware:
                 (ADMIN_ROLE, verifier),
                 (NOTIFIER_ROLE, notifier_verifier),
                 (CLAUDIA_ROLE, claudia_verifier),
+                (VIEWER_ROLE, viewer_verifier),
             )
             if v is not None
         )

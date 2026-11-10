@@ -2,8 +2,8 @@
 
 Defined by unit M4b (the host calls it), implemented by unit M4a
 (`application/claudia/screening.py`: parser OR strict Haiku, degraded mode).
-The host only reads the verdict: `ok` -> full tool set, `flagged` /
-`degraded` -> read-only turn, actions need a code (C48, C51).
+The host only reads the verdict: `ok` -> the text verbatim; `flagged` /
+`degraded` -> same tool set, text quoted under a fixed extra-care line (F-CL8).
 """
 
 from __future__ import annotations

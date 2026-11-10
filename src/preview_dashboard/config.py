@@ -17,7 +17,7 @@ import stat
 import unicodedata
 from collections.abc import Iterable, Mapping
 from pathlib import Path, PurePosixPath
-from typing import Any, Self
+from typing import Any, Literal, Self
 from urllib.parse import urlsplit
 
 from pydantic import ValidationInfo, field_validator, model_validator
@@ -415,8 +415,8 @@ class _NarrowOnlyEnvSource(PydanticBaseSettingsSource):
 
     @staticmethod
     def _check_viewer_paths_env(data: Mapping[str, Any]) -> None:
-        """The viewer's extra read-only roots come from the root-owned TOML only (C57)."""
-        for name in ("kb_root", "claudia_approvals_snapshot"):
+        """The viewer's extra read-only roots (C57) and the host's whisper dir (C62): TOML only."""
+        for name in ("kb_root", "claudia_approvals_snapshot", "claudia_whisper_dir"):
             if name in data:
                 raise SettingsError(f"PDASH_{name.upper()} may only be set in the config file")
 
@@ -428,13 +428,24 @@ class _NarrowOnlyEnvSource(PydanticBaseSettingsSource):
         """
         if "notify_owner_chat_id" in data:
             raise SettingsError("notify_owner_chat_id may only be set in the config file")
-        # Same rule for the Claudia switch: it opens the owner-text and approval routes.
-        for name, label in (("notify_enabled", "notifications"), ("claudia_enabled", "Claudia")):
+        # Same rule for the Claudia switch: it opens the owner-text and approval routes,
+        # and for the media switches (C61): they open the voice/photo intake.
+        for name, label in (
+            ("notify_enabled", "notifications"),
+            ("claudia_enabled", "Claudia"),
+            ("claudia_dashboard_decisions", "dashboard decisions"),
+            ("claudia_voice_input_enabled", "voice input"),
+            ("claudia_photo_input_enabled", "photo input"),
+        ):
             if name not in data:
                 continue
             wants_off = str(data[name]).strip().lower() in _FALSE_WORDS
             if not wants_off and self._base_value(base, name) is not True:
                 raise SettingsError(f"PDASH_{name.upper()} may only turn {label} off")
+        # Env may narrow a photo turn to read-only, never widen it to full tools.
+        tools = "claudia_photo_turn_tools"
+        if tools in data and data[tools] != "read_only" and self._base_value(base, tools) != "full":
+            raise SettingsError(f"PDASH_{tools.upper()} may only select read_only")
 
 
 class Settings(BaseSettings):
@@ -507,6 +518,55 @@ class Settings(BaseSettings):
     claudia_enabled: bool = False
     claudia_token_file: Path = Path("/etc/preview-dashboard/claudia.token")
     totp_secret_file: Path = Path("/etc/preview-dashboard/totp.secret")
+    # F-CL6 (ADR 0043): Approve/Deny in the dashboard panel. On by default (the
+    # owner asked for it) but only takes effect with `claudia_enabled`; see
+    # `dashboard_decisions_active`. The viewer then holds `viewer_token_file`
+    # for the one `/v1/viewer/*` admin route.
+    claudia_dashboard_decisions: bool = True
+    viewer_token_file: Path = Path("/etc/preview-dashboard/viewer.token")
+    # Owner voice notes / photos (F-CL4, C61): each effective only with
+    # `claudia_enabled` (see `voice_input_active` / `photo_input_active`).
+    # Owner decision 2026-11-09: both on by default. An explicit false in TOML or
+    # env turns one off; voice also needs the pinned whisper install (C62), else
+    # the host turns it off for that run with one alert.
+    claudia_voice_input_enabled: bool = True
+    claudia_photo_input_enabled: bool = True
+    # Tool set of a photo turn (host, unit B): read-only unless the owner picks full.
+    claudia_photo_turn_tools: Literal["read_only", "full"] = "read_only"
+    # whisper.cpp install of `install.sh --whisper` (C62); None = /opt/claudia-whisper.
+    # TOML only: env may not point the host at other binaries.
+    claudia_whisper_dir: Path | None = None
+
+    @field_validator("claudia_voice_input_enabled", "claudia_photo_input_enabled", mode="before")
+    @classmethod
+    def _validate_media_switch(cls, value: object) -> object:
+        """A real bool from TOML; env strings are left to the env rules (on only from TOML)."""
+        if isinstance(value, bool | str):
+            return value
+        raise ValueError("must be true or false")
+
+    @field_validator("claudia_photo_turn_tools", mode="before")
+    @classmethod
+    def _validate_photo_tools(cls, value: object) -> object:
+        """Exactly `read_only` or `full` (no case folding, no other spelling)."""
+        if value not in ("read_only", "full"):
+            raise ValueError('claudia_photo_turn_tools must be "read_only" or "full"')
+        return value
+
+    @property
+    def voice_input_active(self) -> bool:
+        """Owner voice notes are taken in: both switches exactly true (fail closed)."""
+        return self.claudia_enabled is True and self.claudia_voice_input_enabled is True
+
+    @property
+    def photo_input_active(self) -> bool:
+        """Owner photos are taken in: both switches exactly true (fail closed)."""
+        return self.claudia_enabled is True and self.claudia_photo_input_enabled is True
+
+    @property
+    def whisper_dir(self) -> Path:
+        """The whisper.cpp install dir the host verifies at start (C62)."""
+        return self.claudia_whisper_dir or Path("/opt/claudia-whisper")
 
     # --- viewer knowledge map (ADR 0031; docs/security.md C57) ----------------
     # Unset = the map is off and the approvals panel shows nothing (fail closed).
@@ -514,7 +574,7 @@ class Settings(BaseSettings):
     kb_root: Path | None = None
     claudia_approvals_snapshot: Path | None = None
 
-    @field_validator("kb_root", "claudia_approvals_snapshot")
+    @field_validator("kb_root", "claudia_approvals_snapshot", "claudia_whisper_dir")
     @classmethod
     def _validate_optional_paths(cls, value: Path | None, info: ValidationInfo) -> Path | None:
         """None, or an absolute normalized path (the reader re-checks owner/mode at use)."""
@@ -530,6 +590,7 @@ class Settings(BaseSettings):
         "telegram_token_file",
         "claudia_token_file",
         "totp_secret_file",
+        "viewer_token_file",
     )
     @classmethod
     def _validate_absolute_paths(cls, value: Path, info: ValidationInfo) -> Path:
@@ -704,6 +765,7 @@ class Settings(BaseSettings):
                 self.telegram_token_file,
                 self.claudia_token_file,
                 self.totp_secret_file,
+                self.viewer_token_file,
             ),
         )
         for root in self.intake_allowed_roots:
@@ -727,6 +789,17 @@ class Settings(BaseSettings):
         secret_files = (*token_files, self.claudia_token_file, self.totp_secret_file)
         if len(set(secret_files)) != len(secret_files):
             raise ValueError("claudia_token_file and totp_secret_file must differ from every token")
+        if self.viewer_token_file in secret_files:
+            raise ValueError("viewer_token_file must differ from every other token and secret")
+
+    @property
+    def dashboard_decisions_active(self) -> bool:
+        """True when the dashboard may decide Claudia's approval requests (F-CL6).
+
+        The switch defaults on but acts on Claudia's requests, so it is inert
+        (no viewer token loaded, no admin route) while Claudia is off.
+        """
+        return self.claudia_enabled and self.claudia_dashboard_decisions
 
     @classmethod
     def settings_customise_sources(

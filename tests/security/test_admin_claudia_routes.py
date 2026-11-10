@@ -74,8 +74,13 @@ ROUTES: list[tuple[str, str, str, dict[str, Any] | None]] = [
     # Voice notes for `sendVoice` (C56, M10b): 404 (nothing waiting) is fine for the notifier.
     (NOTIFIER, "GET", f"/v1/notifier/voice/{ZERO_ULID}", None),
     (NOTIFIER, "POST", f"/v1/notifier/voice/{ZERO_ULID}/release", {}),
+    # Owner voice/photo intake (C61): a bad body is a 400/422 for the notifier token.
+    (NOTIFIER, "POST", "/v1/notifier/media", {}),
     (CLAUDIA, "GET", "/v1/claudia/messages", None),
     (CLAUDIA, "POST", "/v1/claudia/messages/{mid}/handled", None),
+    # A text message has no media: 404 is fine for the claudia token (C61).
+    (CLAUDIA, "GET", "/v1/claudia/messages/{mid}/media", None),
+    (CLAUDIA, "POST", "/v1/claudia/messages/{mid}/media/release", {}),
     (CLAUDIA, "POST", "/v1/claudia/replies", {"text": "Done!"}),
     # Bad audio is a 400 for the claudia token; every other token is refused first (C56, M10).
     (CLAUDIA, "POST", "/v1/claudia/voice", {"text": "Done!", "audio": ""}),
@@ -153,6 +158,9 @@ def test_c45_claudia_inventory_has_no_answer_tap_code_or_grant_route():
     assert claudia == {
         ("GET", "/v1/claudia/messages"),
         ("POST", "/v1/claudia/messages/{message_id}/handled"),
+        # Owner voice/photo bytes (C61): fetch one, then release it.
+        ("GET", "/v1/claudia/messages/{message_id}/media"),
+        ("POST", "/v1/claudia/messages/{message_id}/media/release"),
         ("POST", "/v1/claudia/replies"),
         ("POST", "/v1/claudia/voice"),
         ("POST", "/v1/claudia/approvals"),
@@ -167,7 +175,12 @@ def test_c45_claudia_inventory_has_no_answer_tap_code_or_grant_route():
     for _method, path in claudia:
         assert not any(word in path for word in forbidden), path
     # Taps and codes exist only in the notifier family.
-    for path in ("/v1/notifier/approvals", "/v1/notifier/codes", "/v1/notifier/messages"):
+    for path in (
+        "/v1/notifier/approvals",
+        "/v1/notifier/codes",
+        "/v1/notifier/messages",
+        "/v1/notifier/media",
+    ):
         assert ("POST", path) in routes
     # Voice audio leaves the store only through the notifier family (C56).
     assert ("GET", "/v1/notifier/voice/{voice_id}") in routes

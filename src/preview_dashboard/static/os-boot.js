@@ -7,12 +7,13 @@
 (function () {
   "use strict";
   // Must equal OSES / DEFAULT_OS in os/registry.js (tests/unit/test_os_contract.py checks it).
-  var OSES = ["platinum", "aero"];
+  var OSES = ["platinum", "aero", "neumorph"];
   var DEFAULT_OS = "platinum";
   // Per-OS font preloads: only vendored /static/fonts/ files (CSP font-src 'self').
   var PRELOAD_FONTS = {
     platinum: ["/static/fonts/pixelify-sans-400.woff2"],
     aero: ["/static/fonts/catamaran-400.woff2", "/static/fonts/catamaran-800.woff2"],
+    neumorph: ["/static/fonts/nunito-400.woff2", "/static/fonts/nunito-800.woff2"],
   };
 
   var os = DEFAULT_OS;

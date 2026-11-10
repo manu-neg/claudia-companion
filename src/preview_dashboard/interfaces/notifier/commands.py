@@ -6,7 +6,8 @@ admin socket before sending the notifier token to it (C30), wires the
 Telegram adapters (link buttons pinned to the dashboard origin from
 `allowed_hosts`, C35) and `AdminDeliveryQueue` into `DeliveryService` and runs
 the loops until SIGTERM; with `owner_messages` the single update poller
-also reads owner texts, approval taps and codes (C44). `pair` prints a
+also reads owner texts, approval taps and codes (C44), and voice notes /
+photos when their switches are on (C61, `media_switches`). `pair` prints a
 one-time code and the chat id to configure; `send_test` asks a two-option
 test question through a caller-supplied admin-token call. Expected
 failures raise `NotifierError` with one safe line (never a token).
@@ -33,13 +34,14 @@ from preview_dashboard.adapters.telegram.client import (
     TelegramError,
     validate_chat_id,
 )
+from preview_dashboard.adapters.telegram.files import TelegramMediaFiles
 from preview_dashboard.adapters.telegram.pairing import (
     PAIR_TIMEOUT_SECONDS,
     PairingTimeoutError,
     new_pairing_code,
     wait_for_pairing,
 )
-from preview_dashboard.adapters.telegram.updates import TelegramUpdateSource
+from preview_dashboard.adapters.telegram.updates import MediaSwitches, TelegramUpdateSource
 from preview_dashboard.application.delivery import DeliveryService
 from preview_dashboard.domain.models import is_ulid
 from preview_dashboard.domain.notifications import dashboard_origin
@@ -111,6 +113,17 @@ class NotifierParts:
 def default_token_groups() -> TokenGroupPolicy:
     """Root, plus this process's egid for telegram.token only (`NOTIFIER_OWN_TOKEN`)."""
     return TokenGroupPolicy(own=NOTIFIER_OWN_TOKEN)
+
+
+def media_switches(config: object) -> MediaSwitches:
+    """Owner voice/photo intake from config (C61): each on only if it **and**
+    `claudia_enabled` are exactly `True`; a missing or odd value is off (fail closed).
+    """
+    claudia = getattr(config, "claudia_enabled", False) is True
+    return MediaSwitches(
+        voice=claudia and getattr(config, "claudia_voice_input_enabled", False) is True,
+        photo=claudia and getattr(config, "claudia_photo_input_enabled", False) is True,
+    )
 
 
 def load_bot_token(path: Path, *, loader: TokenLoader | None = None) -> BotToken:
@@ -187,7 +200,12 @@ def build_notifier(
     # One getUpdates poller either way (Telegram allows only one): the
     # router widens it to owner messages only when asked (C44).
     answers: AnswerSource = (
-        OwnerUpdateRouter(TelegramUpdateSource(telegram, chat_id), queue, channel)
+        OwnerUpdateRouter(
+            TelegramUpdateSource(telegram, chat_id, media=media_switches(config)),
+            queue,
+            channel,
+            files=TelegramMediaFiles(telegram),
+        )
         if owner_messages
         else TelegramAnswerSource(telegram, chat_id)
     )

@@ -24,6 +24,7 @@ from preview_dashboard.domain.errors import (
     InvalidStateError,
     LimitExceededError,
     NotFoundError,
+    RateLimitedError,
     StorageUnavailableError,
     UnsupportedContentError,
     ValidationError,
@@ -47,6 +48,7 @@ _CODES: dict[int, str] = {
     415: "unsupported_media_type",
     416: "range_not_satisfiable",
     421: "misdirected_request",
+    429: "too_many_requests",
     500: "internal_error",
     503: "service_unavailable",
 }
@@ -57,6 +59,7 @@ _DOMAIN_STATUS: tuple[tuple[type[DomainError], int], ...] = (
     (ConflictError, 409),  # concurrent edit: the client re-reads and retries
     (InvalidStateError, 409),
     (AlreadyExistsError, 409),
+    (RateLimitedError, 429),  # before its base class: a rate, not a size (F-CL6 decisions)
     (LimitExceededError, 413),
     (UnsupportedContentError, 415),
     (StorageUnavailableError, 503),  # server-side refusal (C24), not bad input (ADR 0025)

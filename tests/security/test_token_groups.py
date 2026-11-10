@@ -235,7 +235,8 @@ def test_c12_cli_unknown_token_kind_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(cli, "load_settings", lambda: notify_settings(tmp_path))
-    assert cli.main(["check-config", "--token-group", "viewer=root"]) == cli.EXIT_FAILED
+    # "viewer" became a real kind in F-CL6; "browser" never is.
+    assert cli.main(["check-config", "--token-group", "browser=root"]) == cli.EXIT_FAILED
     assert "token kind must be one of admin, notifier, telegram" in capsys.readouterr().err
 
 

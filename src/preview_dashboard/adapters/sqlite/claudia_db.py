@@ -6,8 +6,9 @@ so approvals or owner messages stored there could be forged by a
 compromised viewer. This file is private to the admin uid (dir 0700, file
 and sidecars 0600, owner = this process's uid); anything looser, a symlink,
 a hardlink or a swapped inode is refused (fail closed), and existing
-entries are never "fixed". Own schema (`user_version` 1), applied only by
-the admin role (`create=True`); the purge job opens it with `create=False`.
+entries are never "fixed". Own schema (`user_version` 2: 1 + the media
+columns of F-CL4), applied only by the admin role (`create=True`); the
+purge job opens it with `create=False`.
 """
 
 from __future__ import annotations
@@ -122,6 +123,21 @@ _C1_INDEX_APPROVALS_EXPIRES_SQL = (
 _C1_SET_VERSION_SQL = "PRAGMA user_version = 1"
 
 
+# Schema 2 (F-CL4, C61): owner voice notes and photos. Additive only: every
+# existing row becomes `kind = 'text'` with no media ref, nothing is rewritten.
+# The bytes live in the admin-only media dir (`adapters/media_store.py`),
+# named by `media_id`; the domain re-checks kind/ref/size on every read.
+_C2_ADD_KIND_SQL = (
+    "ALTER TABLE owner_messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'text' "
+    "CHECK (kind IN ('text', 'voice', 'photo'))"
+)
+_C2_ADD_MEDIA_ID_SQL = "ALTER TABLE owner_messages ADD COLUMN media_id TEXT"
+_C2_ADD_MEDIA_BYTES_SQL = (
+    "ALTER TABLE owner_messages ADD COLUMN media_bytes INTEGER CHECK (media_bytes >= 1)"
+)
+_C2_SET_VERSION_SQL = "PRAGMA user_version = 2"
+
+
 def _claudia_migration_1(conn: sqlite3.Connection) -> None:
     conn.execute(_C1_CREATE_OWNER_MESSAGES_SQL)
     conn.execute(_C1_INDEX_UNHANDLED_SQL)
@@ -133,7 +149,17 @@ def _claudia_migration_1(conn: sqlite3.Connection) -> None:
     conn.execute(_C1_SET_VERSION_SQL)
 
 
-_CLAUDIA_MIGRATIONS: tuple[Migration, ...] = ((1, _claudia_migration_1),)
+def _claudia_migration_2(conn: sqlite3.Connection) -> None:
+    conn.execute(_C2_ADD_KIND_SQL)
+    conn.execute(_C2_ADD_MEDIA_ID_SQL)
+    conn.execute(_C2_ADD_MEDIA_BYTES_SQL)
+    conn.execute(_C2_SET_VERSION_SQL)
+
+
+_CLAUDIA_MIGRATIONS: tuple[Migration, ...] = (
+    (1, _claudia_migration_1),
+    (2, _claudia_migration_2),
+)
 
 CLAUDIA_SCHEMA_VERSION = _CLAUDIA_MIGRATIONS[-1][0]
 

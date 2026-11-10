@@ -81,6 +81,10 @@ def _samples(bundle: Item, text: Item) -> dict[str, list[tuple[str, str]]]:
             ("GET", "/api/kb/notes/not-an-id"),
         ],
         "/api/claudia/approvals": [("GET", "/api/claudia/approvals")],
+        # Dashboard decisions (C46) are off in this env: 404, still no cookies/CORS.
+        "/api/claudia/approvals/{approval_id}/decision": [
+            ("POST", f"/api/claudia/approvals/{'0' * 32}/decision"),
+        ],
         "/": [("GET", "/"), ("HEAD", "/")],
         "/static/{name:path}": [("GET", "/static/missing.js")],
         "/i/{item_id}/{rev}/{relpath:path}": [

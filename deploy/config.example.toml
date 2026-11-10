@@ -127,6 +127,25 @@ claudia_token_file = "/etc/preview-dashboard/claudia.token"
 # it with `preview-dashboard claudia totp setup --group pdash-totp` and run
 # serve-admin with `--token-group totp=pdash-totp` (C47, ADR 0035).
 totp_secret_file = "/etc/preview-dashboard/totp.secret"
+# Approve/Deny on the dashboard (ADR 0043, C46). On by default, but acts only
+# while claudia_enabled = true; set false to keep decisions on Telegram only.
+# Env may only switch it off. The viewer forwards the owner's choice + code over
+# the admin socket with its own token (root:pdash-viewtok 0640, only valid on
+# /v1/viewer/*); the admin re-checks everything.
+claudia_dashboard_decisions = true
+viewer_token_file = "/etc/preview-dashboard/viewer.token"
+
+# Owner voice notes / photos to Claudia (C61, C62). On by default (owner
+# 2026-11-09); each acts only with claudia_enabled = true. Set one to false
+# to turn it off; env may only switch them off. Voice also needs
+# `install.sh --whisper`: without it the host turns voice off (one alert).
+claudia_voice_input_enabled = true
+claudia_photo_input_enabled = true
+# Tools for a photo turn: "read_only" (default) or "full"; env may only narrow.
+claudia_photo_turn_tools = "read_only"
+# Where `install.sh --whisper` put whisper.cpp + the model (C62). Leave unset
+# for the default; voice input stays off if the hashes there do not match.
+# claudia_whisper_dir = "/opt/claudia-whisper"
 
 # --- Knowledge map (viewer, read only; docs/security.md C57) ---------------
 # Config file only (env can't set these). Unset = the map is off (404).

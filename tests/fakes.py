@@ -47,6 +47,7 @@ from preview_dashboard.domain.notifications import (
     NotificationId,
     PendingTask,
     TaskId,
+    approval_outcome_content,
     validate_message_ref,
 )
 from preview_dashboard.domain.owner_messages import InboxState, OwnerMessage, OwnerMessageId
@@ -496,17 +497,29 @@ class InMemoryNotificationOutbox:
             settled[task.id] = task.done(None)  # stale: the question is already resolved
             return None
         content = task.content
+        outcome: ApprovalState | None = None
         if notification.approval_id is not None:
             request = self.approval_lookup(notification.approval_id)
-            if (
+            if task.action is DeliveryAction.RESOLVE:
+                if request is None:
+                    settled[task.id] = task.dropped()  # no request: nothing true to show
+                    return None
+                if request.state in (ApprovalState.PENDING, ApprovalState.TAPPED):
+                    settled[task.id] = task.dropped()  # forged edit of an undecided request
+                    return None
+                # F-CL5, like SQLite: the fixed text of the stored state, never the row's.
+                outcome = request.state
+                content = approval_outcome_content(outcome)
+            elif (
                 request is None
                 or request.state is not ApprovalState.PENDING
                 or request.is_expired(now)
             ):
                 settled[task.id] = task.done(None)  # buttons for a live PENDING request only
                 return None
-            # Like SQLite: the shown text is the request's, never the task row's (C46).
-            content = MessageContent(text=request.action_text)
+            else:
+                # Like SQLite: the shown text is the request's, never the task row's (C46).
+                content = MessageContent(text=request.action_text)
         ref: str | None = None
         if task.action is DeliveryAction.RESOLVE:
             send = self._send_for(task.notification_id, task.channel)
@@ -526,11 +539,55 @@ class InMemoryNotificationOutbox:
             payload=DeliveryPayload(
                 content=content,
                 question_id=notification.question_id,
-                final_state=task.final_state,
+                final_state=None if notification.approval_id is not None else task.final_state,
                 approval_id=notification.approval_id,
+                approval_outcome=outcome,
             ),
             message_ref=ref,
         )
+
+    def add_approval_resolves(
+        self,
+        approval_id: ApprovalId,
+        *,
+        content: MessageContent,
+        final_state: QuestionState,
+        now: datetime,
+        new_task_id: Callable[[], TaskId],
+    ) -> int:
+        """`ApprovalResolveOutbox`: one RESOLVE per channel whose prompt SEND can be edited."""
+        if content.buttons or content.link is not None:
+            raise ValidationError("an approval outcome has no buttons or link")
+        prompts = [n for n in self.notifications.values() if n.approval_id == approval_id]
+        if len(prompts) != 1:
+            return 0
+        sends = sorted(
+            (
+                t
+                for t in self.tasks.values()
+                if t.notification_id == prompts[0].id
+                and t.action is DeliveryAction.SEND
+                and (
+                    t.state is DeliveryState.PENDING
+                    or (t.state is DeliveryState.DONE and t.message_ref is not None)
+                )
+            ),
+            key=lambda t: t.channel,
+        )
+        tasks = [
+            DeliveryTask.new_resolve(
+                id=new_task_id(),
+                notification_id=prompts[0].id,
+                channel=send.channel,
+                content=content,
+                final_state=final_state,
+                now=now,
+            )
+            for send in sends
+        ]
+        self.check_new(None, tasks)
+        self.insert(None, tasks)
+        return len(tasks)
 
     def get_task(self, task_id: TaskId) -> DeliveryTask:
         try:

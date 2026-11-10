@@ -29,14 +29,19 @@ Group=pdash
 # pdash-kb (M9, ADR 0036): read-only access to the knowledge base (root:pdash-kb
 # 0750, files 0640) for the knowledge map (C57). install.sh creates the group
 # on every host, so this unit starts whether or not Claudia is installed.
-SupplementaryGroups=pdash-kb
+# pdash-viewtok (F-CL6, ADR 0043): read viewer.token (root:pdash-viewtok 0640,
+# shared only with pdash-admin, which verifies it) for dashboard Approve/Deny
+# (C46). Also created on every host; the file exists only with Claudia.
+SupplementaryGroups=pdash-kb pdash-viewtok
 UMask=0007
 
 # PDASH_ADMIN_UID is written by install.sh once pdash-admin exists (system
 # users get a dynamically assigned uid; this file lets that uid flow into
 # the unit without editing it). See docs/operations.md "Deployment".
+# --token-group viewer=pdash-viewtok: trusted for viewer.token only (ADR 0024);
+# the token is read only while dashboard decisions are active (Claudia on).
 EnvironmentFile=/etc/preview-dashboard/admin-uid.env
-ExecStart=/opt/preview-dashboard/.venv/bin/preview-dashboard serve-viewer --trusted-owner-uid ${PDASH_ADMIN_UID}
+ExecStart=/opt/preview-dashboard/.venv/bin/preview-dashboard serve-viewer --trusted-owner-uid ${PDASH_ADMIN_UID} --token-group viewer=pdash-viewtok
 
 Restart=on-failure
 RestartSec=2s
@@ -59,14 +64,15 @@ ReadOnlyPaths=/var/lib/preview-dashboard
 ReadOnlyPaths=/var/lib/preview-dashboard/blobs
 ReadOnlyPaths=/var/lib/preview-dashboard/staging
 ReadOnlyPaths=/etc/preview-dashboard
-# The viewer never reads the admin bearer token (it has no admin API
-# client); denying it outright means a path-traversal or config bug in this
-# process can't exfiltrate it even though /etc/preview-dashboard is
-# otherwise readable (it needs config.toml). /run/preview-dashboard is the
-# *admin* service's own RuntimeDirectory (holds admin.sock, C26); the
-# viewer has no admin API client and no legitimate reason to reach it
-# either, so it is masked the same way, even though ProtectSystem=strict
-# does not hide /run by itself (unit 12 audit, L1).
+# The viewer never reads the admin bearer token; denying it outright means a
+# path-traversal or config bug in this process can't exfiltrate it even
+# though /etc/preview-dashboard is otherwise readable (it needs config.toml).
+# /run/preview-dashboard (the admin's RuntimeDirectory: admin.sock only, C26)
+# is masked here (unit 12 audit, L1): a viewer without Claudia has no
+# legitimate reason to reach it. On Claudia hosts install.sh writes the drop-in
+# viewer.service.d/claudia-decisions.conf, which restates this list without
+# that one entry so the viewer's single admin client can post dashboard
+# Approve/Deny (F-CL6, ADR 0043). The drop-in must be kept in step with this line.
 InaccessiblePaths=/root /home /etc/preview-dashboard/admin.token /run/preview-dashboard
 # Claudia (M9; C57 = I2's one amendment, S-C1 S1/S2): the KB is the only
 # extra root, and read-only. The admin-only Claudia DB dir, voice store,

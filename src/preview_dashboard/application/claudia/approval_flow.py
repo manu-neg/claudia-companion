@@ -3,11 +3,14 @@
 A request is opened by the host (never by the model's words alone) in two ways:
 - **reply line**: a run that ends with `waiting for approval: <description>`
   asks, after a full-set turn, for the **last approvable action the C59/C60
-  hook denied in that run** (`DenialRecorder`), or after a flagged /
-  degraded (read-only) turn, a `flagged_message` request for that message;
+  hook denied in that run** (`DenialRecorder`) or, with no deny, the
+  `<kind> <target>` the line names (F-CL8, same checks as the tool); after a
+  read-only (photo) turn, a `flagged_message` request for that message;
 - **`request_approval` tool** (F-CL3): during a full-set turn she names a
   canonical approvable kind + exact target + a short reason; the host
-  checks them (`request_from_tool`) and opens the same kind of request.
+  checks them (`request_from_tool`) and opens the same kind of request;
+  `cancel_approval` (F-CL5, `cancel_from_tool`) closes one of her own
+  parked requests under the same run checks.
 The shown text is always host-built (`<kind label>: <target>`, her short
 words after it). A request lives up to 24 h, so the host never blocks its
 worker on it: it is **parked** and a separate poller (`poll_parked`) watches
@@ -43,6 +46,7 @@ from preview_dashboard.domain.approvals import (
     ApprovalState,
     WindowId,
     normalize_action_target,
+    parse_approval_id,
     sanitize_action_text,
 )
 from preview_dashboard.domain.errors import ConflictError, DomainError, ValidationError
@@ -106,6 +110,19 @@ TOOL_BAD_TARGET_TEXT: Final = (
 TOOL_BAD_REASON_TEXT: Final = (
     "refused: reason must be one short plain line (at most 120 characters, no links, "
     "no invisible characters)"
+)
+# `cancel_approval` answers (fixed texts, F-CL5). Only an id she was given back is echoed.
+TOOL_CANCELLED_TEXT: Final = (
+    "Approval request {id} is cancelled; nothing was approved. Its Telegram message and the "
+    "dashboard panel update by themselves. Tell the owner in your reply."
+)
+TOOL_CANCEL_DECIDED_TEXT: Final = (
+    "refused: approval request {id} was already decided or closed; the host resumes you "
+    "with the outcome if there is one"
+)
+TOOL_CANCEL_UNKNOWN_TEXT: Final = "refused: you have no open approval request with that id"
+TOOL_CANCEL_FAILED_TEXT: Final = (
+    "refused: the request could not be cancelled right now; it still expires on its own"
 )
 
 _ACTION_LABELS: Final = {
@@ -511,8 +528,9 @@ class ApprovalFlow:
     ) -> ApprovalAsk | None:
         """The request for this run, or None if the host can't name one exactly.
 
-        Read-only turns (flagged / degraded) can only ask to treat their
-        message as a request; full turns ask for the hook's last deny.
+        Read-only turns (photos) can only ask to treat their message as a
+        request; full turns ask for the hook's last deny, else for the
+        `<kind> <target>` the line names (F-CL8).
         """
         if not actionable:
             if message_id is None:
@@ -527,7 +545,12 @@ class ApprovalFlow:
             )
         denied = self._denials.last(window_id)
         if denied is None:
-            return None
+            # F-CL8: no deny this run -> the line itself may name `<kind> <target>`,
+            # under the same kind/target checks as `request_approval`.
+            named = _named_action(description)
+            if named is None:
+                return None
+            denied, description = named
         text = build_action_text(denied.kind, denied.target, description)
         if text is None:
             return None
@@ -618,6 +641,50 @@ class ApprovalFlow:
             return ToolAnswer(None, refused.text)
         self._park(request, message_id=run.message_id, generation=run.generation, chain=run.chain)
         return ToolAnswer(request.id, TOOL_PENDING_TEXT.format(id=request.id))
+
+    def cancel_from_tool(self, request_id: object, nonce: object) -> ToolAnswer:
+        """`cancel_approval` (F-CL5): close one of her own open requests; never raises.
+
+        Same run checks as `request_from_tool` (the run's own nonce, a
+        full-set run). Only her own action request that this host parked
+        (never a host-opened flagged_message) can be cancelled, through the
+        admin's close-only cancel route (C58); anything else is refused without saying whether it
+        exists. It only ever takes power away: no request is opened or decided.
+        The poller then sees CANCELLED and settles it silently.
+        """
+        try:
+            return self._tool_cancel(request_id, nonce)
+        except Exception as exc:  # a bug must not leave the socket thread hanging
+            _log.error("cancel_approval failed (%s)", type(exc).__name__)
+            return ToolAnswer(None, TOOL_CANCEL_FAILED_TEXT)
+
+    def _tool_cancel(self, request_id: object, nonce: object) -> ToolAnswer:
+        with self._lock:
+            run = self._run
+            if run is None or not _nonce_matches(run.nonce, nonce):
+                return ToolAnswer(None, TOOL_NO_RUN_TEXT)
+            if not run.actionable:
+                return ToolAnswer(None, TOOL_READ_ONLY_TEXT)
+            try:
+                approval_id = parse_approval_id(request_id)
+            except ValidationError:
+                return ToolAnswer(None, TOOL_CANCEL_UNKNOWN_TEXT)
+            parked = self._parked.get(approval_id)
+            if parked is None or parked.request.kind is not ApprovalKind.ACTION:
+                # Not hers (another session's, a host-opened flagged_message, decided,
+                # or never opened): one fixed answer, no oracle.
+                return ToolAnswer(None, TOOL_CANCEL_UNKNOWN_TEXT)
+        try:
+            result = self._admin.cancel_approval(approval_id)
+        except DomainError as exc:
+            _log.warning("cancel_approval: admin cancel failed (%s)", type(exc).__name__)
+            return ToolAnswer(None, TOOL_CANCEL_FAILED_TEXT)
+        _log.info("cancel_approval %s: %s", approval_id, result)
+        if result == "cancelled":
+            return ToolAnswer(approval_id, TOOL_CANCELLED_TEXT.format(id=approval_id))
+        if result == "already_resolved":
+            return ToolAnswer(None, TOOL_CANCEL_DECIDED_TEXT.format(id=approval_id))
+        return ToolAnswer(None, TOOL_CANCEL_FAILED_TEXT)
 
     # --- watching ------------------------------------------------------------------------
 
@@ -864,6 +931,22 @@ def _approvable_kind(raw: object) -> ActionKind | None:
     return kind if kind in APPROVABLE_KINDS else None
 
 
+def _named_action(description: str) -> tuple[DeniedAction, str] | None:
+    """`<action_kind> <action_target> [rest]` from a reply line (F-CL8), else None.
+
+    Same canonical kinds (never `unknown`/`peer_message`) and target
+    normalization as `request_approval`; the rest is her short description.
+    """
+    parts = description.split(maxsplit=2)
+    if len(parts) < 2:
+        return None
+    kind = _approvable_kind(parts[0])
+    target = _exact_target(parts[1])
+    if kind is None or target is None:
+        return None
+    return DeniedAction(kind, target), parts[2] if len(parts) > 2 else ""
+
+
 def _exact_target(raw: object) -> str | None:
     if not isinstance(raw, str) or not raw or len(raw) > TARGET_INPUT_MAX_CHARS:
         return None
@@ -886,6 +969,10 @@ __all__ = [
     "TOOL_BAD_KIND_TEXT",
     "TOOL_BAD_REASON_TEXT",
     "TOOL_BAD_TARGET_TEXT",
+    "TOOL_CANCELLED_TEXT",
+    "TOOL_CANCEL_DECIDED_TEXT",
+    "TOOL_CANCEL_FAILED_TEXT",
+    "TOOL_CANCEL_UNKNOWN_TEXT",
     "TOOL_CHAIN_TEXT",
     "TOOL_NO_RUN_TEXT",
     "TOOL_ONE_PER_TURN_TEXT",

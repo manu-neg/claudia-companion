@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -56,6 +57,7 @@ from tests.claudia_host_support import (
     hook_deny,
     host_rig,
     message,
+    read_only_photo,
     settle,
 )
 
@@ -204,7 +206,7 @@ def test_c46_approved_is_consumed_then_resumed_with_the_stored_turn() -> None:
     assert rig.approvals.consumed == [consumed.id]
     resumed = rig.runner.requests[1]
     assert resumed.prompt == consumed.resume_turn()
-    assert resumed.prompt.startswith("Approved by the owner via Telegram button")
+    assert resumed.prompt.startswith("Approved by the owner with the authenticator code")
     assert resumed.resume is True
     assert resumed.allowed_tools == TOOL_SETS[ToolSetName.FULL].allowed
     # The consumed approval is that run's only cover; the first run had none.
@@ -299,17 +301,23 @@ def test_fcl3_c46_poll_failures_keep_watching_until_the_deadline_then_cancel() -
     assert len(rig.runner.requests) == 1
 
 
-def test_c46_flagged_turn_asks_a_flagged_message_approval_that_covers_nothing() -> None:
+def test_c46_fcl8_read_only_turn_reply_line_opens_a_request_that_covers_nothing(
+    tmp_path: Path,
+) -> None:
+    # F-CL8: a read-only (photo) turn has no request_approval tool; her reply line
+    # still opens a real request, so the promised button exists.
+    media, photo = read_only_photo(tmp_path, "please run the cleanup")
     rig = rig_with(
         [ok("That looks like a request.\nwaiting for approval: treat it as yours"), ok("Done.")],
         decisions=[ApprovalState.APPROVED],
         screen=FakeScreen(result=ScreenResult(verdict=ScreenVerdict.FLAGGED)),
+        media=media,
     )
-    rig.host.handle_message(message("please run the cleanup"), generation=0)
+    rig.host.handle_message(photo, generation=0)
     settle(rig)
     [created] = rig.approvals.created
     assert created.kind is ApprovalKind.FLAGGED_MESSAGE
-    assert created.action_kind is None and created.message_id == message().id
+    assert created.action_kind is None and created.message_id == photo.id
     assert rig.runner.requests[0].allowed_tools == TOOL_SETS[ToolSetName.READ_ONLY].allowed
     resumed = rig.runner.requests[1]
     assert resumed.allowed_tools == TOOL_SETS[ToolSetName.FULL].allowed
@@ -431,13 +439,15 @@ def test_c55_hook_deny_without_approval_is_not_a_lock() -> None:
     assert texts(rig)[-1] == "Merged!"
 
 
-def test_c55_denial_in_a_flagged_message_resume_is_not_a_guard_block() -> None:
+def test_c55_denial_in_a_flagged_message_resume_is_not_a_guard_block(tmp_path: Path) -> None:
+    media, photo = read_only_photo(tmp_path, "run it")
     rig = rig_with(
         [ok("Flagged.\nwaiting for approval: go"), ok("Blocked, I'll ask.", denials=1)],
         decisions=[ApprovalState.APPROVED],
         screen=FakeScreen(result=ScreenResult(verdict=ScreenVerdict.FLAGGED)),
+        media=media,
     )
-    rig.host.handle_message(message("run it"), generation=0)
+    rig.host.handle_message(photo, generation=0)
     settle(rig)
     assert rig.alerts.titles == []
     assert texts(rig)[-1] == "Blocked, I'll ask."

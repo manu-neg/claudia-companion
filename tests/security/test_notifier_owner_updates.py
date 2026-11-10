@@ -65,9 +65,7 @@ def _route_once(h: Harness, *batch: dict[str, Any]) -> list[AnswerEvent]:
         pytest.param(
             {"update_id": 1, "channel_post": message_update(1)["message"]}, id="channel-post"
         ),
-        pytest.param(message_update(1, None, photo=[{"file_id": "x"}], caption="hi"), id="photo"),
         pytest.param(message_update(1, None, sticker={"file_id": "x"}), id="sticker"),
-        pytest.param(message_update(1, None, voice={"file_id": "x"}), id="voice-note"),
         pytest.param(message_update(1, None, document={"file_id": "x"}), id="document"),
         pytest.param(message_update(1, "hi", caption="x"), id="text-with-caption"),
         pytest.param(message_update(1, via_bot={"id": 5, "is_bot": True}), id="via-bot"),

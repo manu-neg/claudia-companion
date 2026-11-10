@@ -3,7 +3,8 @@
 `scan_message` is step 1 of the screen: it flags lines that look like prompt
 injection (EN/ES instruction phrases, also in leetspeak / look-alike letters),
 role or tool tags, host-built approval turns (resume-turn look-alikes),
-commands (incl. prose `rm`/`curl`), code blocks, links, encoded blobs,
+commands (incl. prose `rm`/`curl`; plain paths and verbs like "delete" are
+not commands, F-CL8), code blocks, links, encoded blobs (not paths),
 invisible or non-Latin characters and forwarded or quoted text. Any hit
 flags the message. `parse_screen_output` validates the Haiku verdict
 (exact JSON, nothing else). Results carry rule names and line numbers only,
@@ -83,8 +84,12 @@ _SHELL = re.compile(
     r"|\bgit\s+(?:push|reset|clone|checkout|clean|config|filter-branch|rebase\s+-i)\b"
     r"|\bgh\s+(?:pr|api|repo|release|secret|auth)\b"
     r"|\|\s*(?:ba|z)?sh\b|&&|\|\||\$\("
-    r"|~/\.\w|/etc/\w|/root/\.|\bid_rsa\b|\.ssh\b|\.credentials\b|\b[\w-]+\.sh\b"
-    r"|(?:^|\s)/(?:bin|usr|var|tmp|dev|proc|opt)/",
+    # F-CL8: a `;` chain into a command and command substitution in backticks.
+    r"|;\s*(?:rm|curl|wget|sudo|sh|bash|zsh|cat|echo|cd|ls|mv|cp|chmod|kill|python3?"
+    r"|node|perl)\b|[=(]\s*`[^`]+`"
+    # Sensitive locations only: an ordinary path (/var/lib/..., ./notes.txt) is
+    # normal owner text since F-CL8; the hook classifies what is done with it.
+    r"|~/\.\w|/etc/\w|/root/\.|\bid_rsa\b|\.ssh\b|\.credentials\b|\b[\w-]+\.sh\b",
     re.IGNORECASE,
 )
 _FENCE = re.compile(r"```|~~~")
@@ -97,6 +102,43 @@ _LINK = re.compile(
     re.IGNORECASE,
 )
 _B64 = re.compile(r"[A-Za-z0-9+/_-]{32,}={0,2}")
+# Path / file-name separators: a run split by them into short plain pieces is a
+# path or hyphenated name, not a blob (F-CL8 false positive on owner paths).
+_PIECE_SEPARATORS = re.compile(r"[/_-]")
+_BLOB_PIECE_CHARS = 32
+_MIXED_PIECE_CHARS = 16
+
+
+def _looks_random(piece: str) -> bool:
+    """A piece mixing digits and letters, or several capitals inside lowercase."""
+    has_digit = any(ch.isdigit() for ch in piece)
+    has_alpha = any(ch.isalpha() for ch in piece)
+    upper = sum(ch.isupper() for ch in piece[1:])
+    return (has_digit and has_alpha) or (upper >= 2 and any(ch.islower() for ch in piece))
+
+
+def _is_blob(token: str) -> bool:
+    """True if a `_B64` match looks encoded rather than like a path or file name."""
+    if "+" in token or token.endswith("="):
+        return True
+    pieces = _PIECE_SEPARATORS.split(token)
+    return any(
+        len(piece) >= _BLOB_PIECE_CHARS
+        or (len(piece) >= _MIXED_PIECE_CHARS and _looks_random(piece))
+        for piece in pieces
+    )
+
+
+def _has_blob(line: str) -> bool:
+    return any(_is_blob(match.group()) for match in _B64.finditer(line))
+
+
+def _is_path_like(word: str) -> bool:
+    """A long word made of `/`, `-` or `_`-separated parts that are each of normal length."""
+    parts = _PIECE_SEPARATORS.split(word)
+    return len(parts) > 1 and all(len(part) <= LONG_WORD_CHARS for part in parts)
+
+
 _EMAIL = re.compile(r"\b[\w.+-]{1,64}@[\w-]{1,63}\.[\w.]{1,63}\b")
 _FORWARD = re.compile(
     r"^\s*(?:forwarded\s+(?:message|from)|reenviado\s+(?:de|mensaje)|fwd?:|-{2,}\s*forwarded"
@@ -128,7 +170,6 @@ _LINE_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("shell", _SHELL),
     ("fence", _FENCE),
     ("link", _LINK),
-    ("base64_or_long_token", _B64),
     ("email", _EMAIL),
     ("secret", _SECRET),
     ("forward", _FORWARD),
@@ -322,8 +363,11 @@ def _line_hits(number: int, line: str) -> list[ParserHit]:
         hits.append(ParserHit(number, "non_ascii_digits"))
     if _has_stacked_marks(line):
         hits.append(ParserHit(number, "stacked_marks"))
-    if any(len(word) > LONG_WORD_CHARS for word in normalized.split()) and not _B64.search(
-        normalized
+    blob = _has_blob(normalized)
+    if blob:
+        hits.append(ParserHit(number, "base64_or_long_token"))
+    elif any(
+        len(word) > LONG_WORD_CHARS and not _is_path_like(word) for word in normalized.split()
     ):
         hits.append(ParserHit(number, "long_token"))
     return hits

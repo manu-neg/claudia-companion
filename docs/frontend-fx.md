@@ -2,7 +2,7 @@
 
 **TL;DR:** Each OS may ship an `fx/` folder: a self-contained, optional layer
 of effects. Platinum's (`static/os/platinum/fx/`, moved from `static/fx/` by
-O1) is Mac OS 8-style chrome (Aero's own `fx/` is described in docs/frontend-os.md#aero): zoom-open, window shade, watch cursor, startup
+O1) is Mac OS 8-style chrome (Aero's and Neumorph's own `fx/` are described in docs/frontend-os.md#aero and #neumorph): zoom-open, window shade, watch cursor, startup
 splash, menu-bar clock, idle screensaver. It only reads the DOM hooks in
 `docs/frontend.md#hooks-for-later-layers`, runs only while its OS is active
 (`html[data-os]`), never imports the functional modules, never touches the

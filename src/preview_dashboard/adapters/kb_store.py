@@ -135,6 +135,15 @@ class FsKbStore:
             admit(self.size(relpath), self.stats())
             self._write(relpath, data)
 
+    def update(self, relpath: str, fn: Callable[[bytes | None], bytes | None]) -> bool:
+        """Read-modify-write under one lock hold; see `KbStore.update`."""
+        with self._locked():
+            new = fn(self.read(relpath))
+            if new is None:
+                return False
+            self._write(relpath, new)
+            return True
+
     def run_locked[T](self, fn: Callable[[], T], *, wait_s: float | None = None) -> T:
         """Run `fn` under the write locks; see `KbStore.run_locked`."""
         with self._locked(wait_s):

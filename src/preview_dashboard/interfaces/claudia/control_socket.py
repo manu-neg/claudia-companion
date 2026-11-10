@@ -10,7 +10,9 @@ hook also turns into a deny). Never logs request content.
 F-CL3: the same socket carries the `request_approval` tool of the
 `claudia-kb` MCP server (`{"v": 1, "approval": {...}}`): the host's approval
 flow checks it against the run in progress and answers `pending` + id or
-`refused` + a fixed text. Peers are root only, like the hook.
+`refused` + a fixed text. Peers are root only, like the hook. F-CL5 adds
+`cancel_approval` (`{"v": 1, "cancel_approval": {"request_id", "nonce"}}`,
+answered `cancelled` + id or `refused` + a fixed text).
 """
 
 from __future__ import annotations
@@ -44,6 +46,8 @@ _BACKLOG: Final = 16
 _UNTRUSTED_DIR_BITS: Final = stat.S_IWGRP | stat.S_IWOTH
 _PEERCRED: Final = struct.Struct("3i")
 APPROVAL_KEYS: Final = frozenset({"action_kind", "action_target", "reason", "nonce"})
+CANCEL_FIELD: Final = "cancel_approval"
+CANCEL_KEYS: Final = frozenset({"request_id", "nonce"})
 _APPROVAL_FIELD_MAX: Final = 1024
 
 
@@ -67,11 +71,21 @@ class ApprovalRequester(Protocol):
         """
         ...
 
+    def cancel_from_tool(self, request_id: object, nonce: object) -> ToolAnswer:
+        """Cancel one of her own open requests, or refuse with a fixed text; never raises.
 
-def encode_tool_answer(answer: ToolAnswer) -> bytes:
-    """One reply line: `{"result": "pending", "id", "text"}` or `{"result": "refused", "text"}`."""
+        `nonce` must be the active run's token (F-CL5, same checks as above).
+        """
+        ...
+
+
+def encode_tool_answer(answer: ToolAnswer, *, ok_result: str = "pending") -> bytes:
+    """One reply line: `{"result": ok_result, "id", "text"}` or `{"result": "refused", "text"}`.
+
+    `ok_result` is `pending` for `request_approval`, `cancelled` for `cancel_approval`.
+    """
     body: dict[str, str] = (
-        {"result": "pending", "id": answer.approval_id, "text": answer.text}
+        {"result": ok_result, "id": answer.approval_id, "text": answer.text}
         if answer.approval_id is not None
         else {"result": "refused", "text": answer.text}
     )
@@ -82,6 +96,20 @@ _REFUSED_MALFORMED: Final = encode_tool_answer(ToolAnswer(None, "refused: malfor
 _REFUSED_OFF: Final = encode_tool_answer(
     ToolAnswer(None, "refused: approvals are not available on this host")
 )
+
+
+def decode_cancel(data: dict[str, object]) -> dict[str, object]:
+    """The `cancel_approval` arguments of a decoded request line (`request_id`, `nonce`).
+
+    Raises:
+        ValueError: not exactly `request_id` and `nonce` strings of at most 1024 chars.
+    """
+    args = data.get(CANCEL_FIELD)
+    if not isinstance(args, dict) or set(args) != CANCEL_KEYS:
+        raise ValueError("bad cancel request")
+    if not all(isinstance(v, str) and len(v) <= _APPROVAL_FIELD_MAX for v in args.values()):
+        raise ValueError("bad cancel request")
+    return args
 
 
 def decode_approval(data: dict[str, object]) -> dict[str, object]:
@@ -279,6 +307,8 @@ class ControlSocketServer:
             return _DENY_MALFORMED
         if isinstance(data, dict) and "approval" in data:
             return self._approval(data)
+        if isinstance(data, dict) and CANCEL_FIELD in data:
+            return self._cancel(data)
         try:
             call = decode_request(line)
         except (UnicodeDecodeError, ValueError, RecursionError):
@@ -301,14 +331,31 @@ class ControlSocketServer:
         _log.info("request_approval: %s", "pending" if answer.pending else "refused")
         return encode_tool_answer(answer)
 
+    def _cancel(self, data: dict[str, object]) -> bytes:
+        """F-CL5 `cancel_approval`: strict shape, then the flow decides (never raises)."""
+        if set(data) != {"v", CANCEL_FIELD} or data["v"] != PROTOCOL_VERSION:
+            return _REFUSED_MALFORMED
+        try:
+            args = decode_cancel(data)
+        except ValueError:
+            return _REFUSED_MALFORMED
+        if self._approvals is None:
+            return _REFUSED_OFF
+        answer = self._approvals.cancel_from_tool(args["request_id"], args["nonce"])
+        _log.info("cancel_approval: %s", "cancelled" if answer.pending else "refused")
+        return encode_tool_answer(answer, ok_result="cancelled")
+
 
 __all__ = [
     "APPROVAL_KEYS",
+    "CANCEL_FIELD",
+    "CANCEL_KEYS",
     "ApprovalRequester",
     "ControlSocketError",
     "ControlSocketServer",
     "Decider",
     "decode_approval",
+    "decode_cancel",
     "decode_request",
     "encode_decision",
     "encode_tool_answer",

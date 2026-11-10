@@ -145,7 +145,8 @@ async def read_json_object(
 ) -> dict[str, object]:
     """Read a bounded `application/json` body that must be a JSON object.
 
-    `max_bytes` is raised only by the voice route (base64 audio, C56).
+    `max_bytes` is raised only by the voice route (base64 audio, C56) and the
+    notifier media route (base64 owner photo/voice note, C61).
     """
     ctype = request.headers.get("content-type", "").split(";")[0].strip().lower()
     if ctype != "application/json":

@@ -68,8 +68,11 @@ DASHBOARD_KNOWN_TOOLS: Final = frozenset(
     }
 )
 KB_TOOL_PREFIX: Final = "mcp__claudia-kb__"
-# `request_approval` (F-CL3) only opens a PENDING request through the host: no decision.
-KB_KNOWN_TOOLS: Final = frozenset({"kb_read", "kb_write", "kb_delete", "request_approval"})
+# `request_approval` (F-CL3) only opens a PENDING request through the host, and
+# `cancel_approval` (F-CL5) only closes one of hers: no decision for either.
+KB_KNOWN_TOOLS: Final = frozenset(
+    {"kb_read", "kb_write", "kb_delete", "request_approval", "cancel_approval"}
+)
 # Built-ins outside the risky set: no decision (the permission guard decides).
 NO_DECISION_BUILTINS: Final = frozenset(
     {

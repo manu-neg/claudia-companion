@@ -27,6 +27,7 @@ from typing import BinaryIO, Literal, Self, overload
 from preview_dashboard.adapters.approvals_snapshot import FileSnapshotSink, default_snapshot_path
 from preview_dashboard.adapters.clock import SystemClock
 from preview_dashboard.adapters.fs_blobstore import FsBlobStore
+from preview_dashboard.adapters.media_store import FsOwnerMediaStore
 from preview_dashboard.adapters.secret_scan import RegexSecretScanner
 from preview_dashboard.adapters.sqlite import (
     CURRENT_VERSION,
@@ -67,14 +68,19 @@ from preview_dashboard.application import (
     QuestionService,
     SlidingWindowRateLimiter,
 )
-from preview_dashboard.application.approval_prompts import OutboxApprovalPrompts
+from preview_dashboard.application.approval_prompts import (
+    OutboxApprovalPrompts,
+    OutboxApprovalResolutions,
+)
 from preview_dashboard.application.approvals import ApprovalService
 from preview_dashboard.application.approvals_snapshot import (
     ApprovalsSnapshotWriter,
     SnapshotOnChange,
 )
 from preview_dashboard.application.claudia.voice import VoiceService
+from preview_dashboard.application.dashboard_decisions import DashboardDecisionService
 from preview_dashboard.application.inbox import InboxService, ScreenHealthBoard
+from preview_dashboard.application.owner_media import OwnerMediaService
 from preview_dashboard.application.purge import InboxHousekeeping, MaintenanceHook
 from preview_dashboard.application.replies import OutboxReplyQueue, ReplyService
 from preview_dashboard.application.stepup import WRONG_CODE_TITLE, StepUpService
@@ -279,17 +285,21 @@ class ClaudiaCore:
 
     `inbox` + `approvals.tap` + `stepup` back notifier-token routes;
     `inbox` (read/handled), `replies`, `approvals` (create/get/consume) and
-    `health` back `claudia`-token routes. Only `stepup` approves (C46/C47).
+    `health` back `claudia`-token routes; `decisions` backs the viewer-token
+    dashboard Approve/Deny (F-CL6). Only `stepup` approves (C46/C47).
     """
 
     inbox: InboxService
     approvals: ApprovalService
     stepup: StepUpService
+    decisions: DashboardDecisionService
     replies: ReplyService
     voice: VoiceService
     health: ScreenHealthBoard
     inbox_events: AsyncioOutboxEvents
     approval_events: AsyncioOutboxEvents
+    # Owner voice notes / photos (C61): notifier intake, claudia fetch/release.
+    media: OwnerMediaService
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -488,6 +498,10 @@ def _claudia_core(
             channels=notify_channels(settings),
             outbox_events=parts.outbox_events,
         ),
+        # F-CL5: a decided request's prompt is edited to a fixed outcome text.
+        resolutions=OutboxApprovalResolutions(
+            outbox=parts.outbox_repo, clock=clock, ids=ids, outbox_events=parts.outbox_events
+        ),
         events=SnapshotOnChange(approval_events, snapshot),
     )
     notify = parts.notify
@@ -507,6 +521,14 @@ def _claudia_core(
     def wrong_code_alert() -> object:
         return notify.notify("failed", WRONG_CODE_TITLE)
 
+    stepup = StepUpService(
+        secret=FileTotpSecret(settings.totp_secret_file, trusted_gids=totp_gids),
+        state=open_stepup_state(Path(settings.data_dir)),
+        approvals=approvals,
+        clock=clock,
+        owner_chat_id=settings.notify_owner_chat_id,
+        alert=wrong_code_alert,
+    )
     return ClaudiaCore(
         inbox=InboxService(
             messages=messages,
@@ -516,14 +538,9 @@ def _claudia_core(
             events=inbox_events,
         ),
         approvals=approvals,
-        stepup=StepUpService(
-            secret=FileTotpSecret(settings.totp_secret_file, trusted_gids=totp_gids),
-            state=open_stepup_state(Path(settings.data_dir)),
-            approvals=approvals,
-            clock=clock,
-            owner_chat_id=settings.notify_owner_chat_id,
-            alert=wrong_code_alert,
-        ),
+        stepup=stepup,
+        # F-CL6: one shared step-up (same counters/lockout) for both surfaces.
+        decisions=DashboardDecisionService(approvals=approvals, stepup=stepup),
         replies=replies,
         # Voice shares the reply service, so it shares its budget (C56, M10).
         voice=VoiceService(
@@ -532,7 +549,22 @@ def _claudia_core(
         health=ScreenHealthBoard(clock),
         inbox_events=inbox_events,
         approval_events=approval_events,
+        media=OwnerMediaService(
+            messages=messages,
+            media=_media_store(settings),
+            clock=clock,
+            ids=ids,
+            owner_chat_id=settings.notify_owner_chat_id,
+            voice_enabled=settings.voice_input_active,
+            photo_enabled=settings.photo_input_active,
+            events=inbox_events,
+        ),
     )
+
+
+def _media_store(settings: Settings) -> FsOwnerMediaStore:
+    """The admin-only media store under `<data_dir>/claudia/media` (C61, ADR 0034)."""
+    return FsOwnerMediaStore(default_claudia_db_path(settings.data_dir).parent)
 
 
 def publish_limits(settings: Settings) -> PublishLimits:
@@ -588,11 +620,15 @@ class _PurgeNoPrompts:
         raise StorageUnavailableError("the purge job never queues approval prompts")
 
 
-def _purge_inbox(settings: Settings, *, clock: Clock, ids: IdGenerator) -> InboxHousekeeping | None:
+def _purge_inbox(
+    settings: Settings, *, clock: Clock, ids: IdGenerator, outbox: SqliteNotificationOutbox
+) -> InboxHousekeeping | None:
     """The purge job's Claudia housekeeping, or None while Claudia is off (no DB to open).
 
     Expiry goes through `ApprovalService.expire_due` (same CAS path as the
-    admin's, S-C1 S12); the database is opened, never created, here.
+    admin's, S-C1 S12) and, like the admin's, queues the prompt's fixed
+    "expired" edit in the shared outbox (F-CL5); the database is opened,
+    never created, here.
     """
     if not settings.claudia_enabled:
         return None
@@ -606,6 +642,7 @@ def _purge_inbox(settings: Settings, *, clock: Clock, ids: IdGenerator) -> Inbox
         ids=ids,
         scanner=RegexSecretScanner(),
         prompts=_PurgeNoPrompts(),
+        resolutions=OutboxApprovalResolutions(outbox=outbox, clock=clock, ids=ids),
     )
     return InboxHousekeeping(
         messages=messages,
@@ -619,6 +656,9 @@ def _purge_inbox(settings: Settings, *, clock: Clock, ids: IdGenerator) -> Inbox
 # Voice audio is collected within minutes; a day covers every retry window and
 # anything older belongs to a delivery the notifier gave up on (C56).
 _VOICE_MAX_AGE_SECONDS = 24 * 3600
+# Owner voice notes / photos (C61): kept <= 24 h. The purge timer is hourly,
+# so files older than 23 h go and none survives a full day.
+_OWNER_MEDIA_MAX_AGE_SECONDS = 23 * 3600
 
 
 def _purge_maintenance(
@@ -631,6 +671,10 @@ def _purge_maintenance(
     if settings.claudia_enabled:
         voice = FsVoiceStore(Path(settings.data_dir) / VOICE_DIR_NAME)
         hooks["voice"] = functools.partial(voice.purge_older_than, _VOICE_MAX_AGE_SECONDS)
+        # Owner media is swept whatever the switches say now (one may have been on).
+        hooks["owner_media"] = functools.partial(
+            _media_store(settings).purge_older_than, _OWNER_MEDIA_MAX_AGE_SECONDS
+        )
     return hooks
 
 
@@ -897,7 +941,7 @@ def build_core(
                     outbox=parts.outbox_repo,
                 ),
                 # C44: 30-day inbox (and finished approval) retention + expiry.
-                inbox=_purge_inbox(settings, clock=clock, ids=ids),
+                inbox=_purge_inbox(settings, clock=clock, ids=ids, outbox=parts.outbox_repo),
             ),
         )
     except BaseException:

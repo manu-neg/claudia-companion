@@ -1,6 +1,7 @@
 """Admin API routes for the Claudia host (`/v1/claudia/*`, `claudia` token only; C45, C46, C56).
 
-Long-poll the owner-message inbox and mark a message handled (CAS), post a
+Long-poll the owner-message inbox and mark a message handled (CAS), fetch
+and release a voice/photo message's checked bytes (C61), post a
 reply or voice reply (own budget, C56), create an approval **request** (always PENDING),
 read one (long-poll until decided), consume an APPROVED one, cancel one or
 every open one (`/stop`, C58; CAS, only ever closes a request), report
@@ -18,13 +19,14 @@ import logging
 from typing import Final
 
 from fastapi import APIRouter, Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from preview_dashboard.application.approvals import ApprovalCreateCommand
 from preview_dashboard.application.inbox import ScreenHealth
 from preview_dashboard.bootstrap import ClaudiaCore
 from preview_dashboard.domain.approvals import ApprovalRequest, ApprovalState
 from preview_dashboard.domain.errors import ValidationError
+from preview_dashboard.domain.owner_media import media_content_type
 from preview_dashboard.domain.owner_messages import OwnerMessage
 from preview_dashboard.interfaces.admin.api import (
     NO_STORE,
@@ -47,6 +49,7 @@ from preview_dashboard.wire.claudia import (
     parse_cancel_open_request,
     parse_health_request,
     parse_messages_limit,
+    parse_release_request,
     parse_reply_request,
     reply_result_to_json,
 )
@@ -132,6 +135,29 @@ async def mark_handled(request: Request, message_id: str) -> JSONResponse:
     claudia = claudia_core(request)
     message = await run_blocking(lambda: claudia.inbox.mark_handled(message_id))
     return JSONResponse({"message": owner_message_to_json(message)}, headers=NO_STORE)
+
+
+@router.get("/messages/{message_id}/media")
+async def fetch_media(request: Request, message_id: str) -> Response:
+    """The checked bytes of a voice/photo message (C61): `audio/ogg` or `image/jpeg`.
+
+    404 for an unknown or text message and once the file was released or
+    purged. Size-capped by kind (2 MiB / 10 MiB) when read.
+    """
+    require_claudia(request)
+    claudia = claudia_core(request)
+    media = await run_blocking(lambda: claudia.media.fetch(message_id))
+    return Response(media.data, media_type=media_content_type(media.kind), headers=NO_STORE)
+
+
+@router.post("/messages/{message_id}/media/release")
+async def release_media(request: Request, message_id: str) -> JSONResponse:
+    """Delete a voice/photo message's file once the host is done (`{}`; idempotent)."""
+    require_claudia(request)
+    parse_release_request(await read_json_object(request))
+    claudia = claudia_core(request)
+    await run_blocking(lambda: claudia.media.release(message_id))
+    return JSONResponse({}, headers=NO_STORE)
 
 
 @router.post("/replies")

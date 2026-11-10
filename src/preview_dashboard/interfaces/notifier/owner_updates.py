@@ -8,7 +8,10 @@ fixed "send your authenticator code" message), hands codes to `/v1/notifier/code
 and **always** deletes the code message afterwards (a failed delete is
 retried with backoff for up to ~47 h, Telegram's delete window; if it never
 succeeds the owner gets one fixed "could not be deleted" notice), and
-stores owner texts in the inbox (`/v1/notifier/messages`). A code the admin
+stores owner texts in the inbox (`/v1/notifier/messages`). Owner voice
+notes / photos (C61) are downloaded with a hard byte cap and posted to
+`/v1/notifier/media` with the same retry rules; one that is off or not
+accepted gets a fixed notice, at most one of each per hour. A code the admin
 reports as `duplicate` gets one fixed "code not checked" notice. An owner
 text the admin could not take is fetched again (offset rewound, the rest
 of the batch with it) after the runner's backoff; the admin stores it once
@@ -26,10 +29,19 @@ from typing import Final, Protocol
 
 from preview_dashboard.adapters.admin_queue import AdminQueueError
 from preview_dashboard.adapters.telegram.answers import ApprovalTap
-from preview_dashboard.adapters.telegram.client import TelegramError
-from preview_dashboard.adapters.telegram.updates import InboundEvent, OwnerCode, OwnerText
+from preview_dashboard.adapters.telegram.client import TelegramError, TelegramFileTooLargeError
+from preview_dashboard.adapters.telegram.updates import (
+    InboundEvent,
+    MediaSkip,
+    MediaSkipped,
+    OwnerCode,
+    OwnerMedia,
+    OwnerText,
+)
 from preview_dashboard.application.delivery import ACK_NOT_RECORDED
+from preview_dashboard.domain.errors import ValidationError
 from preview_dashboard.ports.notify import AnswerEvent
+from preview_dashboard.wire.notifier_media import MediaSubmission
 from preview_dashboard.wire.notifier_messages import (
     TAP_ACK_TEXTS,
     ApprovalTapSubmission,
@@ -58,6 +70,12 @@ DELETE_RETRY_MAX_SECONDS: Final = 3600.0
 DELETE_GIVE_UP_SECONDS: Final = 47 * 3600.0
 # Bounded memory; codes arrive at most a few per approval.
 MAX_PENDING_DELETES: Final = 64
+# Media notices (switch off / not accepted, C61): at most one of each per hour.
+MEDIA_NOTICE_INTERVAL_SECONDS: Final = 3600.0
+_SKIP_NOTICES: Final = {
+    MediaSkip.OFF: OwnerNotice.MEDIA_OFF,
+    MediaSkip.REFUSED: OwnerNotice.MEDIA_REFUSED,
+}
 
 _log = logging.getLogger(__name__)
 
@@ -88,6 +106,10 @@ class OwnerUpdatesAdmin(Protocol):
         """Store one owner text (idempotent); raise on failure."""
         ...
 
+    def submit_media(self, submission: MediaSubmission) -> MessageResult:
+        """Store one owner voice note / photo (idempotent, C61); raise on failure."""
+        ...
+
     def submit_approval_tap(self, submission: ApprovalTapSubmission) -> TapResult:
         """Record one approval tap; raise on failure."""
         ...
@@ -110,6 +132,14 @@ class OwnerChat(Protocol):
 
     def send_notice(self, notice: OwnerNotice) -> None:
         """Send one fixed `OwnerNotice` text; raise on failure."""
+        ...
+
+
+class MediaFiles(Protocol):
+    """Downloads one owner file (`adapters/telegram/files.TelegramMediaFiles`, C61)."""
+
+    def download(self, file_id: str, max_bytes: int) -> bytes:
+        """At most `max_bytes` of `file_id`; `ValueError` / `TelegramFileTooLargeError` = never."""
         ...
 
 
@@ -138,6 +168,13 @@ def _is_permanent(exc: Exception) -> bool:
     return isinstance(exc, ValueError) or (isinstance(exc, TelegramError) and exc.status == 400)
 
 
+def _is_lost_media(exc: Exception) -> bool:
+    """A media download that can never succeed: refused, over the cap, or gone (400/404)."""
+    if isinstance(exc, ValueError | TelegramFileTooLargeError):
+        return True
+    return isinstance(exc, TelegramError) and exc.status in (400, 404)
+
+
 class OwnerUpdateRouter:
     """The notifier's `AnswerSource` once owner messages are on.
 
@@ -145,7 +182,8 @@ class OwnerUpdateRouter:
         updates: the single update poller.
         admin: the admin's notifier routes (notifier token).
         chat: deletes code messages, sends the fixed code prompt and notices.
-        monotonic: clock for delete retries (injectable for tests).
+        files: downloads owner voice notes / photos (C61); None = media dropped.
+        monotonic: clock for delete retries and notice limits (injectable for tests).
     """
 
     def __init__(
@@ -154,16 +192,20 @@ class OwnerUpdateRouter:
         admin: OwnerUpdatesAdmin,
         chat: OwnerChat,
         *,
+        files: MediaFiles | None = None,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._updates = updates
         self._admin = admin
         self._chat = chat
+        self._files = files
         self._monotonic = monotonic
         self._retry_due = False
         self._failures: tuple[int, int] = (-1, 0)  # (update id, failed tries)
         # In memory only: a notifier restart forgets them (logged when queued).
         self._pending_deletes: list[_PendingDelete] = []
+        # Last time each media notice went out (monotonic), for the 1/hour limit.
+        self._notice_sent: dict[OwnerNotice, float] = {}
         # The answer source name reported with answers and taps (`telegram`).
         self.name: str = updates.name
 
@@ -196,6 +238,8 @@ class OwnerUpdateRouter:
                 self._tap(event)
             elif isinstance(event, OwnerCode):
                 self._code(event)
+            elif isinstance(event, MediaSkipped):
+                self._limited_notice(_SKIP_NOTICES[event.reason])
             elif not self._store(event):
                 # Later updates of this batch come again with it, in order.
                 self._updates.rewind(event.update_id)
@@ -215,14 +259,21 @@ class OwnerUpdateRouter:
 
     # --- internals ---------------------------------------------------------------
 
-    def _store(self, event: OwnerText) -> bool:
+    def _store(self, event: OwnerText | OwnerMedia) -> bool:
         """True once the inbox has the message (or it is given up for good)."""
         try:
-            result = self._admin.submit_message(event.submission)
+            if isinstance(event, OwnerMedia):
+                result = self._store_media(event)
+                if result is None:
+                    return True  # lost for good: notice sent
+            else:
+                result = self._admin.submit_message(event.submission)
         except Exception as exc:
             status = exc.status if isinstance(exc, AdminQueueError) else None
             if status in DROP_STATUSES:
                 _log.warning("owner message %d refused by the admin; dropped", event.update_id)
+                if isinstance(event, OwnerMedia):
+                    self._limited_notice(OwnerNotice.MEDIA_REFUSED)
                 return True
             update_id, tries = self._failures
             tries = tries + 1 if update_id == event.update_id else 1
@@ -239,6 +290,39 @@ class OwnerUpdateRouter:
             return False
         _log.info("owner message %d: %s", event.update_id, result)
         return True
+
+    def _store_media(self, event: OwnerMedia) -> MessageResult | None:
+        """Download (bounded) and post one voice note / photo; None if it can never be stored.
+
+        Transient failures (network, Telegram 5xx/429, admin down) raise and
+        are retried like texts; the file is fetched again then.
+        """
+        if self._files is None:
+            _log.warning("owner media %d: no downloader wired; dropped", event.update_id)
+            return None
+        try:
+            data = self._files.download(event.file_id, event.max_bytes)
+            submission = event.submission(data)
+        except Exception as exc:
+            if not (_is_lost_media(exc) or isinstance(exc, ValidationError)):
+                raise
+            _log.warning(
+                "owner media %d not fetched (%s); dropped", event.update_id, type(exc).__name__
+            )
+            self._limited_notice(OwnerNotice.MEDIA_REFUSED)
+            return None
+        del data  # the submission holds the only copy
+        return self._admin.submit_media(submission)
+
+    def _limited_notice(self, notice: OwnerNotice) -> None:
+        """Send a fixed media notice at most once per `MEDIA_NOTICE_INTERVAL_SECONDS` (C61)."""
+        now = self._monotonic()
+        last = self._notice_sent.get(notice)
+        if last is not None and now - last < MEDIA_NOTICE_INTERVAL_SECONDS:
+            _log.info("owner notice %s suppressed (sent within the hour)", notice)
+            return
+        self._notice_sent[notice] = now
+        self._notice(notice)
 
     def _tap(self, tap: ApprovalTap) -> None:
         text = ACK_NOT_RECORDED

@@ -199,14 +199,26 @@ def test_fcl3_c46_tool_target_is_normalized_like_the_hooks() -> None:
 def test_fcl3_c46_tool_refused_outside_a_full_turn() -> None:
     flow = host_rig().flow
     assert flow.request_from_tool("pr_merge", PR, "go", NONCE).text == af.TOOL_NO_RUN_TEXT
+    flow.begin_run(
+        WINDOW_A,
+        af.RunContext(
+            window_id=WINDOW_A, message_id=None, actionable=False, generation=0, nonce=NONCE
+        ),
+    )
+    assert flow.request_from_tool("pr_merge", PR, "go", NONCE).text == af.TOOL_READ_ONLY_TEXT
+
+
+def test_fcl8_c46_tool_works_in_a_flagged_turn() -> None:
+    # F-CL8: a flag keeps the full set, so she can ask; the hook still gates the step.
     rig, runner = tool_rig(
         [ok("hi")],
         {0: ("pr_merge", PR, "go")},
         screen=FakeScreen(result=ScreenResult(verdict=ScreenVerdict.FLAGGED)),
     )
     rig.host.handle_message(message("merge"), generation=0)
-    assert runner.answers[0].text == af.TOOL_READ_ONLY_TEXT
-    assert rig.approvals.created == []
+    assert runner.answers[0].pending
+    [created] = rig.approvals.created
+    assert created.action_kind is not None and created.action_target == PR
 
 
 def test_fcl3_c46_recap_runs_can_not_ask() -> None:
@@ -522,6 +534,10 @@ class _Requester:
         self.calls.append((kind, target, reason, nonce))
         return self.answer
 
+    def cancel_from_tool(self, request_id: object, nonce: object) -> af.ToolAnswer:
+        self.calls.append(("cancel", request_id, None, nonce))
+        return self.answer
+
 
 def _serve(sock_dir: Path, requester: _Requester | None) -> ControlSocketServer:
     gate = HookGate(FakeAuditLog(), FixedClock())
@@ -633,7 +649,7 @@ def test_fcl3_c46_only_claudias_own_runs_get_the_tool(tmp_path: Path, caller: st
     approvals = HostApprovals(tmp_path / "none.sock")
     mine = build_server(_kb_tools(tmp_path, "claudia", approvals))
     names = {t.name for t in asyncio.run(mine.list_tools())}
-    assert names == {"kb_read", "kb_write", "kb_delete", "request_approval"}
+    assert names == {"kb_read", "kb_write", "kb_delete", "request_approval", "cancel_approval"}
     other = _kb_tools(tmp_path, caller, approvals)
     assert {t.name for t in asyncio.run(build_server(other).list_tools())} == {
         "kb_read",

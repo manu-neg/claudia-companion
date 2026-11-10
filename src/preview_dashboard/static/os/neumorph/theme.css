@@ -1,0 +1,126 @@
+/*
+  os/neumorph/theme.css - the Neumorph OS's design tokens: soft UI, one cool porcelain surface
+  for the desktop and every element on it, depth from light/shadow pairs only, one iris accent.
+  Token contract: docs/frontend.md#theme-tokens; OS rules and contrast: docs/frontend-os.md#neumorph.
+  Light only. Nunito comes from fonts.css; the shadow recipe details are private tokens in chrome.css.
+*/
+
+:root[data-os="neumorph"] {
+  color-scheme: light;
+
+  /* Surfaces: one porcelain colour everywhere (the illusion needs elements and desktop equal) */
+  --color-bg: #e4e9f1;
+  --color-desktop-dot: #d9e0ea;
+  --color-window: #e4e9f1;
+  --color-window-shade: #d8dfe9;
+  --color-surface: #e4e9f1;
+  --color-surface-sunken: #dce2eb;
+  --color-media-bg: #1e2638;
+  --color-overlay: rgb(196 205 220 / 0.62);
+
+  /* Lines: barely there; chrome.css replaces most of them with shadow pairs */
+  --color-border: #cfd7e2;
+  --color-border-strong: #b7c2d2;
+  --color-rule: #d6dde7;
+  --color-bevel-light: #ffffff;
+  --color-bevel-dark: #a9b6c9;
+  --border-width: 1px;
+
+  /* Text: dark slate ink (10.7:1 on the surface), muted 5.1:1 */
+  --color-text: #26304a;
+  --color-text-muted: #566179;
+
+  /* Accent: iris, for primary action, current section, selection, focus, progress, checked */
+  --color-accent: #5146d8;
+  --color-accent-hover: #4338c4;
+  --color-accent-contrast: #ffffff;
+  --color-accent-soft: #d6dbf6;
+  --color-focus: #5146d8;
+
+  /* States: danger stays a clear red; notes share the one surface (an LED marks them) */
+  --color-danger: #b8253a;
+  --color-danger-hover: #96192c;
+  --color-danger-contrast: #ffffff;
+  --color-warning-soft: #e4e9f1;
+  --color-warning-text: #7a4a00;
+  --color-success: #2a6e47;
+
+  /* Typography: Nunito's rounded terminals match the pillowy shapes */
+  --font-chrome: "Nunito", ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  --font-body: "Nunito", ui-rounded, "SF Pro Rounded", system-ui, -apple-system, Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-size-xs: 0.8125rem;
+  --font-size-sm: 0.875rem;
+  --font-size-base: 0.9375rem;
+  --font-size-lg: 1.0625rem;
+  --font-size-xl: 1.5rem;
+  --font-size-2xl: 2rem;
+  --font-size-control: 1rem;
+  --font-weight-regular: 400;
+  --font-weight-medium: 600;
+  --font-weight-strong: 800;
+  --line-height-tight: 1.2;
+  --line-height-body: 1.5;
+  --letter-spacing-heading: -0.015em;
+
+  /* Spacing scale (4px base) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  /* Shape: generous, soft (windows and wells use larger private radii) */
+  --radius-sm: 12px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-pill: 999px;
+
+  /* Elevation: one light source top-left; blur ~2x offset; raised = pair + a 1px moulded rim
+     (light up-left, faint shade down-right) so the lit edge reads on the pale surface; sunken =
+     the pair inset with a crisp upper-left lip. Key states share four layers in one order
+     (outer shade, outer light, inner shade, inner light) so press interpolates smoothly. */
+  --shadow-raised: 10px 10px 24px rgb(158 172 195 / 0.78), -10px -10px 24px rgb(255 255 255 / 1), inset -1px -1px 2px rgb(150 164 188 / 0.25), inset 1.5px 1.5px 1px rgb(255 255 255 / 0.9);
+  --shadow-overlay: 20px 20px 44px rgb(140 155 180 / 0.62), -14px -14px 34px rgb(255 255 255 / 0.9), inset -1px -1px 2px rgb(150 164 188 / 0.25), inset 1.5px 1.5px 1px rgb(255 255 255 / 0.9);
+  --bevel-raised: 4px 4px 9px rgb(163 177 198 / 0.75), -4px -4px 9px rgb(255 255 255 / 1), inset -1px -1px 1px rgb(150 164 188 / 0.28), inset 1px 1px 1px rgb(255 255 255 / 0.85);
+  --bevel-pressed: 0 0 0 rgb(163 177 198 / 0), 0 0 0 rgb(255 255 255 / 0), inset 3px 3px 7px rgb(163 177 198 / 0.8), inset -3px -3px 7px rgb(255 255 255 / 0.95);
+  --bevel-sunken: inset 5px 5px 12px rgb(163 177 198 / 0.72), inset -5px -5px 12px rgb(255 255 255 / 0.9), inset 2px 2px 3px rgb(150 164 188 / 0.28);
+  /* The default button glows softly in the accent instead of a ring */
+  --ring-default: 0 6px 16px -4px rgb(81 70 216 / 0.55);
+
+  /* Patterns: a faint convex sheen (painted per background in chrome.css; this is the fallback) */
+  --desktop-pattern: linear-gradient(145deg, #e9edf4 0, #e4e9f1 50%, #dfe5ee 100%);
+  --desktop-pattern-size: 100% 100%;
+  --desktop-pattern-position: 0 0;
+
+  /* Icons: iris accent, pale periwinkle folders */
+  --icon-accent: #5146d8;
+  --icon-folder: #c9cff2;
+  --icon-folder-tab: #e6e9fb;
+  --icon-folder-shade: #9aa3dd;
+
+  /* Motion: quiet and physical (press and hover timings are private tokens in chrome.css) */
+  --motion-duration: 180ms;
+  --motion-ease: cubic-bezier(0.3, 0.7, 0.4, 1);
+
+  /* Layout */
+  --desktop-max-width: 90rem;
+  --content-max-width: 60rem;
+  --reading-max-width: 46rem;
+  --desk-icons-width: 6rem;
+  --icon-size-sm: 16px;
+  --icon-size: 32px;
+  --icon-size-lg: 48px;
+  --tap-target: 44px;
+  --focus-ring-width: 3px;
+  --topbar-height: 3.75rem;
+  --titlebar-height: 3rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-os="neumorph"] {
+    --motion-duration: 0ms;
+  }
+}

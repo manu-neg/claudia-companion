@@ -1,0 +1,847 @@
+/*
+  os/neumorph/fx/fx.css - Neumorph motion (docs/frontend-os.md#neumorph "Motion"): surfaces rise
+  out of the porcelain and sink back into it. Windows, menus, pickers, balloons, the dialog and
+  its veil, the toast and the full-screen preview each get an entrance and a faster exit; the
+  badge pops, the splash and the screensaver breathe. Only opacity and transform animate, timed
+  by the --neu-dur-* / --neu-ease-* tokens in chrome.css. Scoped to :root[data-os="neumorph"],
+  keyframes prefixed "neumorph-"; everything is switched off under reduced motion (end of file).
+*/
+
+/* Tabular figures keep the readout from twitching as the minutes change. */
+:root[data-os="neumorph"] .shell-clock {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- the physical vocabulary --- */
+
+/* Rise: from flat in the surface (invisible: same colour, no shadow yet) up to its elevation. */
+@keyframes neumorph-rise {
+  from {
+    opacity: 0;
+    transform: translateY(var(--neu-rise-y)) scale(var(--neu-rise-scale));
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Sink: back down into the surface, a touch smaller as it recedes. */
+@keyframes neumorph-sink {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(var(--neu-sink-scale));
+  }
+}
+
+@keyframes neumorph-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(var(--neu-menu-scale));
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes neumorph-menu-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.97);
+  }
+}
+
+@keyframes neumorph-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes neumorph-fade-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+/* --- windows: every window rises into place; the old one's ghost sinks (fx/ghost.js) --- */
+
+:root[data-os="neumorph"] .main > .window {
+  transform-origin: 50% 20%;
+  animation: neumorph-rise var(--neu-dur-window-in) var(--neu-ease-out);
+}
+
+/* Ghosts: empty slabs standing in for something the app has just removed. */
+:root[data-os="neumorph"] .neumorph-ghost {
+  --neu-gx: 0px;
+  --neu-gy: 0px;
+  --neu-gw: 0px;
+  --neu-gh: 0px;
+
+  position: absolute;
+  left: var(--neu-gx);
+  top: var(--neu-gy);
+  width: var(--neu-gw);
+  height: var(--neu-gh);
+  pointer-events: none;
+}
+
+/* Behind the incoming window (z -1: above the desk, below all content), so the two slabs
+   cross: the new one rising through the old one sinking. */
+:root[data-os="neumorph"] .neumorph-ghost-window {
+  z-index: -1;
+  border-radius: var(--neu-radius-window);
+  background: var(--neu-slab);
+  box-shadow: var(--neu-raise-md);
+  transform-origin: 50% 20%;
+  animation: neumorph-sink var(--neu-dur-window-out) var(--neu-ease-in) forwards;
+}
+
+:root[data-os="neumorph"] .neumorph-ghost-menu,
+:root[data-os="neumorph"] .neumorph-ghost-dialog,
+:root[data-os="neumorph"] .neumorph-ghost-veil {
+  position: fixed;
+}
+
+:root[data-os="neumorph"] .neumorph-ghost-menu {
+  z-index: 300;
+  border-radius: var(--neu-radius-panel);
+  background: var(--neu-slab);
+  box-shadow: var(--neu-raise-lg);
+  transform-origin: 85% 0;
+  animation: neumorph-menu-out var(--neu-dur-menu-out) var(--neu-ease-in) forwards;
+}
+
+:root[data-os="neumorph"] .neumorph-ghost-veil {
+  inset: 0;
+  z-index: 1000;
+  width: auto;
+  height: auto;
+  background: var(--color-overlay);
+  animation: neumorph-fade-out var(--neu-dur-window-out) var(--neu-ease-in) forwards;
+}
+
+:root[data-os="neumorph"] .neumorph-ghost-dialog {
+  z-index: 1001;
+  border-radius: var(--neu-radius-window);
+  background: var(--neu-slab);
+  box-shadow: var(--neu-raise-lg);
+  animation: neumorph-sink var(--neu-dur-window-out) var(--neu-ease-in) forwards;
+}
+
+/* --- menus: the context menu rises toward its "…" key; pickers and balloons too, and they
+   sink on close (a transition: they are hidden, not removed; allow-discrete keeps them drawn
+   until the fade ends) --- */
+
+:root[data-os="neumorph"] .ctx-menu {
+  transform-origin: 85% 0;
+  animation: neumorph-menu-in var(--neu-dur-menu-in) var(--neu-ease-out);
+}
+
+:root[data-os="neumorph"] .shell-menu {
+  transform-origin: 50% 0;
+  transition:
+    opacity var(--neu-dur-menu-out) var(--neu-ease-in),
+    transform var(--neu-dur-menu-out) var(--neu-ease-in),
+    display var(--neu-dur-menu-out) allow-discrete;
+}
+
+:root[data-os="neumorph"] .shell-menu:not([hidden]) {
+  animation: neumorph-menu-in var(--neu-dur-menu-in) var(--neu-ease-out);
+}
+
+:root[data-os="neumorph"] .shell-menu[hidden] {
+  opacity: 0;
+  transform: translateY(-3px) scale(0.97);
+}
+
+:root[data-os="neumorph"] .balloon-help {
+  transform-origin: 2rem 0;
+  transition:
+    opacity var(--neu-dur-menu-out) var(--neu-ease-in),
+    transform var(--neu-dur-menu-out) var(--neu-ease-in),
+    display var(--neu-dur-menu-out) allow-discrete;
+}
+
+:root[data-os="neumorph"] .balloon-help[data-tail="bottom"] {
+  transform-origin: 2rem 100%;
+}
+
+:root[data-os="neumorph"] .balloon-help:not([hidden]) {
+  animation: neumorph-menu-in var(--neu-dur-menu-in) var(--neu-ease-out);
+}
+
+:root[data-os="neumorph"] .balloon-help[hidden] {
+  opacity: 0;
+  transform: scale(0.97);
+}
+
+/* --- the confirm dialog rises like a window over a veil that fades in --- */
+
+:root[data-os="neumorph"] .dialog[open] {
+  animation: neumorph-rise var(--neu-dur-window-in) var(--neu-ease-out);
+}
+
+:root[data-os="neumorph"] .dialog[open]::backdrop {
+  animation: neumorph-fade-in var(--neu-dur-window-in) var(--neu-ease-out);
+}
+
+/* --- toast: a pill that rises from the bottom edge and sinks back --- */
+
+:root[data-os="neumorph"] .toast {
+  opacity: 0;
+  transform: translate(-50%, var(--neu-rise-y)) scale(0.96);
+  transition:
+    opacity var(--neu-dur-toast-out) var(--neu-ease-in),
+    transform var(--neu-dur-toast-out) var(--neu-ease-in),
+    visibility var(--neu-dur-toast-out);
+}
+
+/* Showing is an animation, not a transition: the first toast goes from display: none (empty)
+   to visible in one step, which a transition can't start from. */
+@keyframes neumorph-toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, var(--neu-rise-y)) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+:root[data-os="neumorph"] .toast.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  transition: visibility var(--neu-dur-instant);
+  animation: neumorph-toast-in var(--neu-dur-toast-in) var(--neu-ease-out);
+}
+
+/* --- full-screen preview: the veil fades in, the media rises, then its close key --- */
+
+:root[data-os="neumorph"] .stage.is-expanded {
+  animation: neumorph-fade-in var(--neu-dur-menu-in) var(--neu-ease-out);
+}
+
+:root[data-os="neumorph"] .stage.is-expanded .stage-frame,
+:root[data-os="neumorph"] .stage.is-expanded .stage-image {
+  animation: neumorph-rise var(--neu-dur-window-in) var(--neu-ease-out);
+}
+
+:root[data-os="neumorph"] .stage.is-expanded .stage-close {
+  animation: neumorph-rise var(--neu-dur-window-in) var(--neu-ease-out) var(--neu-dur-press) both;
+}
+
+/* --- count badge: the number rises out of its well and settles (fx/badge.js) --- */
+
+@keyframes neumorph-pop {
+  0% {
+    transform: none;
+    animation-timing-function: var(--neu-ease-out);
+  }
+
+  35% {
+    transform: translateY(-1px) scale(1.24);
+    animation-timing-function: var(--neu-ease-settle);
+  }
+
+  100% {
+    transform: none;
+  }
+}
+
+:root[data-os="neumorph"] .shell-bar .desk-icon.neumorph-badge-pop::after {
+  animation: neumorph-pop var(--neu-dur-pop) linear;
+}
+
+/* --- splash: the surface alone; the knob rises out of it, its LED lights, the name surfaces;
+   then it sinks away and the bar and the window rise into place (fx/splash.js) --- */
+
+:root[data-os="neumorph"] {
+  --neu-splash-knob: 14px 14px 30px var(--neu-shade), -14px -14px 30px var(--neu-light), inset -1px -1px 2px var(--neu-rim-shade), inset 2px 2px 1px var(--neu-rim-light);
+  --neu-splash-led-glow: 0 0 18px 4px rgb(81 70 216 / 0.45);
+  --neu-dome: 26px 26px 60px var(--neu-shade), -22px -22px 54px var(--neu-light), inset -2px -2px 3px var(--neu-rim-shade), inset 3px 3px 2px var(--neu-rim-light);
+  --neu-dome-deep: 40px 40px 80px var(--neu-shade), -30px -30px 66px var(--neu-light);
+  --neu-ring: inset 3px 3px 6px var(--neu-shade), inset -3px -3px 6px var(--neu-light);
+}
+
+:root[data-os="neumorph"] .neumorph-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  background-color: var(--color-bg);
+  background-image: var(--desktop-pattern);
+  color: var(--color-text);
+  font-family: var(--font-chrome);
+}
+
+:root[data-os="neumorph"] .neumorph-splash-knob {
+  position: relative;
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  background: var(--neu-convex);
+  box-shadow: var(--neu-splash-knob);
+  animation: neumorph-knob-rise calc(var(--neu-dur-splash) * 1.4) var(--neu-ease-out) both;
+}
+
+/* The LED's socket: a small sunken dimple in the knob. */
+:root[data-os="neumorph"] .neumorph-splash-knob::before {
+  content: "";
+  position: absolute;
+  inset: 38px;
+  border-radius: 50%;
+  box-shadow: var(--neu-press-xs);
+}
+
+:root[data-os="neumorph"] .neumorph-splash-led {
+  position: absolute;
+  inset: 45px;
+  border-radius: 50%;
+  background: var(--neu-led);
+  box-shadow: var(--neu-splash-led-glow);
+  animation: neumorph-led-on var(--neu-dur-splash) var(--neu-ease-out) calc(var(--neu-dur-splash) * 1.1) both;
+}
+
+:root[data-os="neumorph"] .neumorph-splash-title {
+  margin: 0;
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-strong);
+  letter-spacing: var(--letter-spacing-heading);
+  text-shadow: var(--neu-engrave);
+  animation: neumorph-rise var(--neu-dur-splash) var(--neu-ease-out) calc(var(--neu-dur-splash) * 0.8) both;
+}
+
+@keyframes neumorph-knob-rise {
+  from {
+    opacity: 0;
+    transform: scale(0.84);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes neumorph-led-on {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+:root[data-os="neumorph"] .neumorph-splash.neumorph-leaving {
+  pointer-events: none;
+  animation: neumorph-fade-out calc(var(--neu-dur-window-out) * 2) var(--neu-ease-in) forwards;
+}
+
+:root[data-os="neumorph"] .neumorph-splash.neumorph-leaving .neumorph-splash-knob {
+  animation: neumorph-sink calc(var(--neu-dur-window-out) * 2) var(--neu-ease-in) forwards;
+}
+
+/* Held flat under the splash, then risen in turn: the bar first, the window just after. */
+:root[data-os="neumorph"].neumorph-splashing .shell-bar,
+:root[data-os="neumorph"].neumorph-splashing .main > .window {
+  opacity: 0;
+  animation: none;
+}
+
+:root[data-os="neumorph"].neumorph-arriving .shell-bar {
+  animation: neumorph-rise var(--neu-dur-window-in) var(--neu-ease-out) both;
+}
+
+:root[data-os="neumorph"].neumorph-arriving .main > .window {
+  animation: neumorph-rise var(--neu-dur-window-in) var(--neu-ease-out) calc(var(--neu-dur-press) * 1.5) both;
+}
+
+/* --- screensaver: the porcelain covers the desk; one dome breathes inside engraved rings
+   (fx/screensaver.js; the overlay is removed while the tab is hidden) --- */
+
+:root[data-os="neumorph"] .neumorph-screensaver {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background-color: var(--color-bg);
+  background-image: var(--desktop-pattern);
+  animation: neumorph-fade-in calc(var(--neu-dur-window-in) * 3) var(--neu-ease-out);
+}
+
+:root[data-os="neumorph"] .neumorph-ss-ring,
+:root[data-os="neumorph"] .neumorph-ss-dome {
+  grid-area: 1 / 1;
+  border-radius: 50%;
+}
+
+:root[data-os="neumorph"] .neumorph-ss-ring {
+  box-shadow: var(--neu-ring);
+  animation: neumorph-ring-breathe var(--neu-dur-breathe) var(--neu-ease-breathe) infinite alternate;
+}
+
+:root[data-os="neumorph"] .neumorph-ss-ring-outer {
+  width: 82vmin;
+  height: 82vmin;
+}
+
+:root[data-os="neumorph"] .neumorph-ss-ring-mid {
+  width: 64vmin;
+  height: 64vmin;
+  animation-delay: calc(var(--neu-dur-breathe) * -0.33);
+}
+
+:root[data-os="neumorph"] .neumorph-ss-ring-inner {
+  width: 48vmin;
+  height: 48vmin;
+  animation-delay: calc(var(--neu-dur-breathe) * -0.66);
+}
+
+:root[data-os="neumorph"] .neumorph-ss-dome {
+  position: relative;
+  width: 30vmin;
+  height: 30vmin;
+  background: var(--neu-convex);
+  box-shadow: var(--neu-dome);
+  animation: neumorph-dome-breathe var(--neu-dur-breathe) var(--neu-ease-breathe) infinite alternate;
+}
+
+/* The deeper lift is a pre-rendered layer that cross-fades (no shadow animation). */
+:root[data-os="neumorph"] .neumorph-ss-dome::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: var(--neu-dome-deep);
+  animation: neumorph-fade-in var(--neu-dur-breathe) var(--neu-ease-breathe) infinite alternate;
+}
+
+@keyframes neumorph-dome-breathe {
+  from {
+    transform: none;
+  }
+
+  to {
+    transform: scale(1.05);
+  }
+}
+
+@keyframes neumorph-ring-breathe {
+  from {
+    opacity: 0.45;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+:root[data-os="neumorph"] .neumorph-screensaver.neumorph-leaving {
+  pointer-events: none;
+  animation: neumorph-fade-out calc(var(--neu-dur-window-out) * 2) var(--neu-ease-in) forwards;
+}
+
+/* --- knowledge map (fx/kmap.js): pearls rise out of the basin in a wave from its centre while
+   the channels draw themselves; a selected note seats, its channels fill with iris light toward
+   its neighbours and a ripple of light and shade spreads through the floor; recent notes
+   breathe; a soft light follows the pointer across the basin. Only transform, opacity,
+   stroke-dashoffset and custom properties change; dasharray is held, never interpolated. --- */
+
+:root[data-os="neumorph"] {
+  --neu-kmap-spec: rgb(255 255 255 / 0.62);
+  --neu-kmap-spec-soft: rgb(255 255 255 / 0.22);
+  --neu-kmap-spec-clear: rgb(255 255 255 / 0);
+  --neu-kmap-light-size: 440px;
+  --neu-kmap-x: -999px;
+  --neu-kmap-y: -999px;
+  --neu-kmap-rx: 0px;
+  --neu-kmap-ry: 0px;
+  --neu-kmap-ripple: inset 4px 4px 8px rgb(138 153 178 / 0.55), inset -4px -4px 8px rgb(255 255 255 / 0.95), 0 0 0 2px rgb(81 70 216 / 0.18);
+}
+
+@keyframes neumorph-kmap-rise {
+  from {
+    opacity: 0;
+    transform: scale(calc(var(--neu-kmap-k) * 0.2));
+  }
+
+  40% {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(var(--neu-kmap-k));
+  }
+}
+
+@keyframes neumorph-kmap-socket {
+  from {
+    opacity: 0;
+    transform: scale(calc(var(--neu-kmap-k) * 0.6));
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(calc(var(--neu-kmap-k) * var(--neu-kmap-socket-k)));
+  }
+}
+
+/* A channel drawn (or filled) from one end: the dash is exactly the line's length (set per line
+   by fx/kmap.js), the offset slides from one length to none. --neu-kmap-from = -1 starts the
+   dash at the other end, so light always leaves the note in focus. */
+@keyframes neumorph-kmap-draw {
+  from {
+    stroke-dasharray: var(--neu-kmap-len) var(--neu-kmap-len);
+    stroke-dashoffset: calc(var(--neu-kmap-len) * var(--neu-kmap-from));
+  }
+
+  to {
+    stroke-dasharray: var(--neu-kmap-len) var(--neu-kmap-len);
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Dotted tag channels: the dots trickle outward three steps, then rest. */
+@keyframes neumorph-kmap-trickle {
+  from {
+    stroke-dashoffset: calc(var(--neu-kmap-from) * 18.3);
+  }
+
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Seat: the selected pearl presses into its socket and settles back up. */
+@keyframes neumorph-kmap-seat {
+  0% {
+    transform: scale(var(--neu-kmap-k));
+    animation-timing-function: var(--neu-ease-press);
+  }
+
+  30% {
+    transform: scale(calc(var(--neu-kmap-k) * 0.82));
+    animation-timing-function: var(--neu-ease-settle);
+  }
+
+  100% {
+    transform: scale(var(--neu-kmap-k));
+  }
+}
+
+@keyframes neumorph-kmap-ripple {
+  from {
+    opacity: 1;
+    transform: translate(var(--neu-kmap-rx), var(--neu-kmap-ry)) scale(0.2);
+  }
+
+  to {
+    opacity: 0;
+    transform: translate(var(--neu-kmap-rx), var(--neu-kmap-ry)) scale(3.4);
+  }
+}
+
+@keyframes neumorph-kmap-breathe {
+  from {
+    opacity: 0.4;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* Entrance of a page of the note slab, and of the code plate. */
+@keyframes neumorph-kmap-page {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The slab itself only lifts (it is already there, showing its hint): no fade. */
+@keyframes neumorph-kmap-lift {
+  from {
+    transform: translateY(6px) scale(0.985);
+  }
+
+  to {
+    transform: none;
+  }
+}
+
+/* Recent notes: the iris rim of their socket breathes slowly (paused while the tab is hidden).
+   In 24 small steps, not every frame: SVG paint isn't composited, so a smooth breath would
+   repaint the whole map 60 times a second; at this pace the steps can't be seen.
+   Listed before the opening rules so the wave wins while it plays. */
+:root[data-os="neumorph"] .kmap-node.is-recent .kmap-ring {
+  animation: neumorph-kmap-breathe calc(var(--neu-dur-breathe) / 2) steps(24) infinite alternate;
+}
+
+:root[data-os="neumorph"].neumorph-kmap-paused .kmap-node.is-recent .kmap-ring {
+  animation-play-state: paused;
+}
+
+/* First open (and back from List): fx/kmap.js sets .neumorph-kmap-opening on the svg for the
+   length of the wave and gives each node and line its delay (--neu-kmap-d, by distance from
+   the centre). */
+:root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening .kmap-dot,
+:root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening .kmap-shine {
+  animation: neumorph-kmap-rise var(--neu-dur-kmap-rise) var(--neu-ease-settle) both;
+  animation-delay: var(--neu-kmap-d);
+}
+
+:root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening .kmap-ring {
+  animation: neumorph-kmap-socket var(--neu-dur-kmap-rise) var(--neu-ease-out) both;
+  animation-delay: var(--neu-kmap-d);
+}
+
+:root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening .kmap-label {
+  animation: neumorph-fade-in var(--neu-dur-kmap-rise) var(--neu-ease-out) both;
+  animation-delay: calc(var(--neu-kmap-d) + var(--neu-dur-kmap-page));
+}
+
+:root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening .kmap-edge[data-kind="link"] {
+  animation: neumorph-kmap-draw var(--neu-dur-kmap-draw) var(--neu-ease-out) both;
+  animation-delay: var(--neu-kmap-d);
+}
+
+:root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening .kmap-edge[data-kind="tag"] {
+  animation: neumorph-fade-in var(--neu-dur-kmap-draw) var(--neu-ease-out) both;
+  animation-delay: var(--neu-kmap-d);
+}
+
+/* Focus (hover or selection): iris light flows out along the note's channels, at an even pace
+   (a sine curve, not the entrance curve, which would have it arrive almost at once). */
+:root[data-os="neumorph"] .kmap-svg.has-focus .kmap-edge.is-near[data-kind="link"] {
+  animation: neumorph-kmap-draw var(--neu-dur-kmap-flow) var(--neu-ease-breathe);
+}
+
+:root[data-os="neumorph"] .kmap-svg.has-focus .kmap-edge.is-near[data-kind="tag"] {
+  animation: neumorph-kmap-trickle var(--neu-dur-kmap-flow) var(--neu-ease-breathe);
+}
+
+:root[data-os="neumorph"] .kmap-svg .kmap-node.is-selected .kmap-dot {
+  animation: neumorph-kmap-seat var(--neu-dur-kmap-seat) linear;
+}
+
+/* The pointer light and the ripple: fx/kmap.js's own aria-hidden decor on the basin floor,
+   under the pearls; both move by transform only (their own compositor layers). */
+:root[data-os="neumorph"] .neumorph-kmap-light {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--neu-kmap-light-size);
+  height: var(--neu-kmap-light-size);
+  margin: calc(var(--neu-kmap-light-size) / -2) 0 0 calc(var(--neu-kmap-light-size) / -2);
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--neu-kmap-spec) 0, var(--neu-kmap-spec-soft) 34%, var(--neu-kmap-spec-clear) 68%);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(var(--neu-kmap-x), var(--neu-kmap-y));
+  transition: opacity var(--neu-dur-kmap-page) var(--neu-ease-out);
+  will-change: transform;
+}
+
+:root[data-os="neumorph"] .neumorph-kmap-light.neumorph-kmap-lit {
+  opacity: 1;
+}
+
+:root[data-os="neumorph"] .neumorph-kmap-ripple {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 120px;
+  height: 120px;
+  margin: -60px 0 0 -60px;
+  border-radius: 50%;
+  box-shadow: var(--neu-kmap-ripple);
+  opacity: 0;
+  pointer-events: none;
+  animation: neumorph-kmap-ripple var(--neu-dur-kmap-ripple) var(--neu-ease-out) forwards;
+}
+
+/* Loading: the empty socket breathes until the pearls arrive (the index is still empty). */
+:root[data-os="neumorph"] .kmap-stage:has(.kmap-index:empty) .kmap-message::before {
+  animation: neumorph-kmap-breathe var(--neu-dur-kmap-ripple) var(--neu-ease-breathe) infinite alternate;
+}
+
+/* Map -> List (and every list on phones): the categories rise in turn, keys with them; a key
+   shown again by a search rises on its own. */
+:root[data-os="neumorph"] .kmap-section,
+:root[data-os="neumorph"] .kmap-entry {
+  animation: neumorph-kmap-page var(--neu-dur-kmap-page) var(--neu-ease-out) both;
+}
+
+:root[data-os="neumorph"] .kmap-section:nth-child(2) {
+  animation-delay: calc(var(--neu-dur-press) * 1);
+}
+
+:root[data-os="neumorph"] .kmap-section:nth-child(3) {
+  animation-delay: calc(var(--neu-dur-press) * 2);
+}
+
+:root[data-os="neumorph"] .kmap-section:nth-child(4) {
+  animation-delay: calc(var(--neu-dur-press) * 3);
+}
+
+:root[data-os="neumorph"] .kmap-section:nth-child(n + 5) {
+  animation-delay: calc(var(--neu-dur-press) * 4);
+}
+
+/* Opening a note: the slab lifts, its pages rise in reading order. */
+:root[data-os="neumorph"] .kmap-stage.is-reading .kmap-panel {
+  animation: neumorph-kmap-lift var(--neu-dur-window-in) var(--neu-ease-out);
+}
+
+:root[data-os="neumorph"] .kmap-panel > * {
+  animation: neumorph-kmap-page var(--neu-dur-kmap-page) var(--neu-ease-out) both;
+}
+
+:root[data-os="neumorph"] .kmap-panel > :nth-child(2) {
+  animation-delay: var(--neu-dur-press);
+}
+
+:root[data-os="neumorph"] .kmap-panel > :nth-child(n + 3) {
+  animation-delay: calc(var(--neu-dur-press) * 2);
+}
+
+/* Approvals: the code plate rises out of the bay; while a decision is on its way the iris LED
+   breathes (its keys are disabled then). */
+:root[data-os="neumorph"] .kmap-approval-code:not([hidden]) {
+  animation: neumorph-kmap-page var(--neu-dur-menu-in) var(--neu-ease-out);
+}
+
+:root[data-os="neumorph"] .kmap-approvals:has(.kmap-approval button:disabled) .group-title::before {
+  background: var(--neu-led);
+  box-shadow: var(--neu-led-glow);
+  animation: neumorph-kmap-breathe var(--neu-dur-kmap-seat) var(--neu-ease-breathe) infinite alternate;
+}
+
+/* --- reduced motion: nothing moves (fx.js also skips ghosts, badge pop, splash and saver;
+   app.css caps durations globally as a backstop) --- */
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-os="neumorph"] {
+    --neu-dur-press: 0ms;
+    --neu-dur-release: 0ms;
+    --neu-dur-menu-in: 0ms;
+    --neu-dur-menu-out: 0ms;
+    --neu-dur-window-in: 0ms;
+    --neu-dur-window-out: 0ms;
+    --neu-dur-toast-in: 0ms;
+    --neu-dur-toast-out: 0ms;
+    --neu-dur-pop: 0ms;
+    --neu-dur-splash: 0ms;
+    --neu-dur-kmap-rise: 0ms;
+    --neu-dur-kmap-draw: 0ms;
+    --neu-dur-kmap-flow: 0ms;
+    --neu-dur-kmap-ripple: 0ms;
+    --neu-dur-kmap-seat: 0ms;
+    --neu-dur-kmap-page: 0ms;
+  }
+
+  :root[data-os="neumorph"] .kmap-node.is-recent .kmap-ring,
+  :root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening .kmap-dot,
+  :root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening .kmap-shine,
+  :root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening .kmap-ring,
+  :root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening .kmap-label,
+  :root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening .kmap-edge[data-kind="link"],
+  :root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening .kmap-edge[data-kind="tag"],
+  :root[data-os="neumorph"] .kmap-svg.has-focus .kmap-edge.is-near[data-kind="link"],
+  :root[data-os="neumorph"] .kmap-svg.has-focus .kmap-edge.is-near[data-kind="tag"],
+  :root[data-os="neumorph"] .kmap-svg .kmap-node.is-selected .kmap-dot,
+  :root[data-os="neumorph"] .neumorph-kmap-ripple,
+  :root[data-os="neumorph"] .kmap-stage:has(.kmap-index:empty) .kmap-message::before,
+  :root[data-os="neumorph"] .kmap-section,
+  :root[data-os="neumorph"] .kmap-entry,
+  :root[data-os="neumorph"] .kmap-stage.is-reading .kmap-panel,
+  :root[data-os="neumorph"] .kmap-panel > *,
+  :root[data-os="neumorph"] .kmap-approval-code:not([hidden]),
+  :root[data-os="neumorph"] .kmap-approvals:has(.kmap-approval button:disabled) .group-title::before {
+    animation: none;
+  }
+
+  :root[data-os="neumorph"] .neumorph-kmap-light {
+    display: none;
+    transition: none;
+  }
+
+  :root[data-os="neumorph"] .main > .window,
+  :root[data-os="neumorph"] .neumorph-ghost-window,
+  :root[data-os="neumorph"] .neumorph-ghost-menu,
+  :root[data-os="neumorph"] .neumorph-ghost-veil,
+  :root[data-os="neumorph"] .neumorph-ghost-dialog,
+  :root[data-os="neumorph"] .ctx-menu,
+  :root[data-os="neumorph"] .shell-menu:not([hidden]),
+  :root[data-os="neumorph"] .balloon-help:not([hidden]),
+  :root[data-os="neumorph"] .dialog[open],
+  :root[data-os="neumorph"] .dialog[open]::backdrop,
+  :root[data-os="neumorph"] .toast.is-visible,
+  :root[data-os="neumorph"] .stage.is-expanded,
+  :root[data-os="neumorph"] .stage.is-expanded .stage-frame,
+  :root[data-os="neumorph"] .stage.is-expanded .stage-image,
+  :root[data-os="neumorph"] .stage.is-expanded .stage-close,
+  :root[data-os="neumorph"] .shell-bar .desk-icon.neumorph-badge-pop::after,
+  :root[data-os="neumorph"] .neumorph-splash-knob,
+  :root[data-os="neumorph"] .neumorph-splash-led,
+  :root[data-os="neumorph"] .neumorph-splash-title,
+  :root[data-os="neumorph"] .neumorph-splash.neumorph-leaving,
+  :root[data-os="neumorph"] .neumorph-splash.neumorph-leaving .neumorph-splash-knob,
+  :root[data-os="neumorph"].neumorph-splashing .shell-bar,
+  :root[data-os="neumorph"].neumorph-splashing .main > .window,
+  :root[data-os="neumorph"].neumorph-arriving .shell-bar,
+  :root[data-os="neumorph"].neumorph-arriving .main > .window,
+  :root[data-os="neumorph"] .neumorph-screensaver,
+  :root[data-os="neumorph"] .neumorph-ss-ring,
+  :root[data-os="neumorph"] .neumorph-ss-dome,
+  :root[data-os="neumorph"] .neumorph-ss-dome::after,
+  :root[data-os="neumorph"] .neumorph-screensaver.neumorph-leaving {
+    animation: none;
+  }
+
+  :root[data-os="neumorph"] .shell-menu,
+  :root[data-os="neumorph"] .balloon-help,
+  :root[data-os="neumorph"] .toast,
+  :root[data-os="neumorph"] .toast.is-visible {
+    transition: none;
+  }
+}

@@ -1400,6 +1400,58 @@ bdi {
   font-size: var(--font-size-xs);
 }
 
+/* F-CL6: Approve (with the authenticator code) / Deny right in the row. */
+.kmap-approval-actions {
+  margin-top: var(--space-1);
+}
+
+.kmap-approval-actions[hidden],
+.kmap-approval-code[hidden] {
+  display: none;
+}
+
+.kmap-approval-code {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+
+.kmap-code-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-strong);
+}
+
+.kmap-code-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.kmap-code-input {
+  width: 8ch;
+  min-height: var(--tap-target);
+  padding: 0 var(--space-2);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-control);
+  letter-spacing: 0.2em;
+  text-align: center;
+}
+
+.kmap-approval-status {
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.kmap-approval-status:empty {
+  display: none;
+}
+
 /* Stage: the map (or the list) beside the note panel; phones stack and swap them. */
 .kmap-stage {
   display: grid;

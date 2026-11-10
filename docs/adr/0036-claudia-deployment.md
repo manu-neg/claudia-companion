@@ -23,3 +23,4 @@
 - Files her runs create are group `pdash-claudiatok` (umask 0022: no new exposure beyond world-readable).
 - Voice needs one manual commit of the real hashes before `--voice-models` works.
 - `systemd-analyze security` (≤ 2.0) is not applied to the two Claudia units.
+- Addendum (F-CL7): the viewer already reads the original KB (no copy); host rule 8 and the recap now make her record discussed topics there, and the host keeps a read-only `guide.md` reference in the KB root.

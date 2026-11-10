@@ -5,7 +5,8 @@ failed, and submit button taps as answers. This is the **only** place
 `QuestionService.answer` is reachable (C34). For the Claudia companion it
 also takes the owner's text messages (C44), Approve/Deny taps (C46) and
 authenticator codes (C47): the only routes that store inbox messages, tap
-an approval or verify a code. The voice routes hand a reply's stored audio
+an approval or verify a code; `/media` takes the owner's voice notes and
+photos (C61). The voice routes hand a reply's stored audio
 to the notifier and delete it after sending (C56). The other tokens are refused here by
 `BearerAuthMiddleware`, and each route re-checks the role. Formats come
 from `preview_dashboard.wire.notifier` and `wire.notifier_messages`,
@@ -22,6 +23,7 @@ from starlette.responses import JSONResponse, Response
 
 from preview_dashboard.application.approvals import TapDecision
 from preview_dashboard.application.inbox import OwnerMessageSubmission
+from preview_dashboard.application.owner_media import OwnerMediaSubmission
 from preview_dashboard.domain.errors import NotFoundError, UnsupportedContentError, ValidationError
 from preview_dashboard.domain.notifications import PendingTask, parse_notification_id
 from preview_dashboard.interfaces.admin.api import (
@@ -45,6 +47,7 @@ from preview_dashboard.wire.notifier import (
     parse_wait_param,
     tasks_to_json,
 )
+from preview_dashboard.wire.notifier_media import MAX_MEDIA_BODY_BYTES, parse_media_request
 from preview_dashboard.wire.notifier_messages import CodeResult as WireCodeResult
 from preview_dashboard.wire.notifier_messages import (
     MessageResult,
@@ -176,6 +179,38 @@ async def submit_message(request: Request) -> JSONResponse:
         result, _stored = await run_blocking(lambda: claudia.inbox.receive(command))
     except ValidationError as exc:
         # 422, not 400/403: the notifier drops a refused message instead of retrying it.
+        raise UnsupportedContentError(str(exc)) from None
+    return JSONResponse(message_result_to_json(MessageResult(str(result))), headers=NO_STORE)
+
+
+@router.post("/media")
+async def submit_media(request: Request) -> JSONResponse:
+    """Store one owner voice note or photo (C61): `{"result": stored | duplicate}`.
+
+    The admin re-checks the owner and the kind's switch, then the bytes by
+    content (Ogg/Opus duration, JPEG structure; metadata stripped). Body ≤
+    `MAX_MEDIA_BODY_BYTES` (base64 file + caption); nothing of it is logged.
+    """
+    require_notifier(request)
+    raw = await read_json_object(request, max_bytes=MAX_MEDIA_BODY_BYTES)
+    submission = parse_media_request(raw)
+    del raw  # the base64 copy: no need to hold it while the bytes are checked
+    claudia = claudia_core(request)
+    command = OwnerMediaSubmission(
+        update_id=submission.update_id,
+        telegram_message_id=submission.message_id,
+        sender_id=submission.sender_id,
+        kind=submission.kind,
+        data=submission.data,
+        caption=submission.caption,
+        is_forwarded=submission.is_forwarded,
+        reply_to_message_id=submission.reply_to_message_id,
+        quote_text=submission.quote_text,
+    )
+    try:
+        result, _stored = await run_blocking(lambda: claudia.media.receive(command))
+    except ValidationError as exc:
+        # 422: refused for good (owner, switch off, bad content); the notifier drops it.
         raise UnsupportedContentError(str(exc)) from None
     return JSONResponse(message_result_to_json(MessageResult(str(result))), headers=NO_STORE)
 

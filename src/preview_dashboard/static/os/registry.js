@@ -4,6 +4,7 @@
   os-boot.js repeats OSES/DEFAULT_OS as literals (it can't import) and a test keeps them equal.
 */
 import aeroBackgrounds from "./aero/backgrounds.js";
+import neumorphBackgrounds from "./neumorph/backgrounds.js";
 import platinumBackgrounds from "./platinum/backgrounds.js";
 
 export const DEFAULT_OS = "platinum";
@@ -11,10 +12,11 @@ export const DEFAULT_OS = "platinum";
 const INFO = Object.freeze({
   platinum: Object.freeze({ label: "Platinum", backgrounds: platinumBackgrounds }),
   aero: Object.freeze({ label: "Aero", backgrounds: aeroBackgrounds }),
+  neumorph: Object.freeze({ label: "Neumorph", backgrounds: neumorphBackgrounds }),
 });
 
 /** Allowlisted OS names, in picker order. */
-export const OSES = Object.freeze(["platinum", "aero"]);
+export const OSES = Object.freeze(["platinum", "aero", "neumorph"]);
 
 /** Display label of an allowlisted OS (never item data). */
 export function osLabel(os) {

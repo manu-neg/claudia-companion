@@ -16,9 +16,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from preview_dashboard.adapters.run_media import WorkdirPhotoFiles
 from preview_dashboard.adapters.secret_scan import RegexSecretScanner
 from preview_dashboard.application.claudia.approval_flow import ApprovalFlow, DenialRecorder
 from preview_dashboard.application.claudia.audit import PeerAudit
+from preview_dashboard.application.claudia.media_input import MediaInput, PhotoTools
 from preview_dashboard.application.claudia.persona import PersonaLoader
 from preview_dashboard.application.claudia.pings import ProgressPings
 from preview_dashboard.application.claudia.runs import ClaudiaHost
@@ -35,6 +37,7 @@ from preview_dashboard.domain.approvals import (
     parse_window_id,
 )
 from preview_dashboard.domain.errors import StorageUnavailableError
+from preview_dashboard.domain.owner_media import MessageKind
 from preview_dashboard.domain.owner_messages import OwnerMessage, OwnerMessageId
 from preview_dashboard.ports.claudia_host import (
     AuditValue,
@@ -48,7 +51,7 @@ from preview_dashboard.ports.claudia_host import (
 from preview_dashboard.ports.claudia_kb import KbBusyError
 from preview_dashboard.ports.claudia_screen import ScreenHealth, ScreenResult, ScreenVerdict
 from tests.fakes import FixedClock
-from tests.owner_updates_support import ogg_opus
+from tests.owner_updates_support import jpeg, ogg_opus
 
 WINDOW_A = parse_window_id("11111111-1111-4111-8111-111111111111")
 WINDOW_B = parse_window_id("22222222-2222-4222-8222-222222222222")
@@ -65,6 +68,42 @@ def message(text: str = "hola Claudia", n: int = 1, *, forwarded: bool = False) 
         received_at=clock.now(),
         is_forwarded=forwarded,
     )
+
+
+PHOTO_MESSAGE_ID = OwnerMessageId("01J00000000000000000000PH9")
+
+
+class _PhotoAdmin:
+    """`HostMedia` serving one valid JPEG; releases are ignored."""
+
+    def fetch_media(self, message_id: OwnerMessageId) -> bytes:
+        return jpeg()
+
+    def release_media(self, message_id: OwnerMessageId) -> None:
+        return None
+
+
+def read_only_photo(tmp_path: Path, caption: str = "") -> tuple[MediaInput, OwnerMessage]:
+    """Photo input with the default read-only photo tools, and one photo message (F-CL8)."""
+    work = tmp_path / "work"
+    work.mkdir(mode=0o700, parents=True, exist_ok=True)
+    media = MediaInput(
+        admin=_PhotoAdmin(),
+        files=WorkdirPhotoFiles(work),
+        photo_enabled=True,
+        photo_tools=PhotoTools.READ_ONLY,
+    )
+    photo = OwnerMessage(
+        id=PHOTO_MESSAGE_ID,
+        update_id=9,
+        telegram_message_id=9,
+        text=caption,
+        received_at=FixedClock().now(),
+        kind=MessageKind.PHOTO,
+        media_id="01J00000000000000000000MD9",
+        media_bytes=1000,
+    )
+    return media, photo
 
 
 class SeqWindowIds:
@@ -434,6 +473,7 @@ def host_rig(
     voice: VoiceComposer | None = None,
     persona: PersonaLoader | None = None,
     pings: ProgressPings | None = None,
+    media: MediaInput | None = None,
     **overrides: object,
 ) -> HostRig:
     """Build a host over fakes; keyword overrides replace a fake (same names as fields)."""
@@ -483,6 +523,7 @@ def host_rig(
         voice_admin=parts["voice_admin"],  # type: ignore[arg-type]
         persona=persona,
         pings=pings,
+        media=media,
     )
     return HostRig(
         host=host,

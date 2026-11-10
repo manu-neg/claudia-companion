@@ -6,7 +6,8 @@ Telegram could auto-link defanged; answer buttons carry `callback_data =
 buttons, Approve `p:<id>:ok` and Deny `p:<id>:no`, built here from the
 payload's `approval_id` (never from stored labels or keys), and after an
 Approve tap the owner gets one fixed "send your code" message
-(`send_code_prompt`); the dashboard link is a separate URL button,
+(`send_code_prompt`); once the request is decided the prompt is edited
+to one fixed outcome text with no buttons (F-CL5); the dashboard link is a separate URL button,
 never part of the text, and only if it is on the configured dashboard
 origin (C35: a forged task cannot put a phishing button on the owner's
 phone). Message refs are `"<chat_id>:<message_id>"` and are only ever
@@ -29,6 +30,7 @@ from preview_dashboard.adapters.telegram.client import (
 )
 from preview_dashboard.domain.errors import ValidationError
 from preview_dashboard.domain.notifications import (
+    APPROVAL_OUTCOME_TEXTS,
     DashboardLinks,
     DeliveryPayload,
     MessageContent,
@@ -101,12 +103,15 @@ def reply_markup(payload: DeliveryPayload, dashboard_origin: str | None) -> dict
 
     An approval prompt instead gets one row of exactly two fixed buttons,
     `Approve` (`p:<id>:ok`) and `Deny` (`p:<id>:no`), and nothing else
-    (`DeliveryPayload` already forbids other buttons and a link there).
+    (`DeliveryPayload` already forbids other buttons and a link there);
+    a decided one (`approval_outcome` set, F-CL5) gets none at all.
     The link button is added only if the link is on exactly
     `dashboard_origin` (`is_dashboard_link`); otherwise, and always when
     the origin is None, it is left out (fail closed). An empty keyboard
     removes the buttons of an edited message.
     """
+    if payload.approval_outcome is not None:
+        return {"inline_keyboard": []}
     if payload.approval_id is not None:
         return {
             "inline_keyboard": [
@@ -178,9 +183,12 @@ class TelegramChannel:
         """Post `payload`; return `"<chat_id>:<message_id>"`.
 
         Raises:
+            ValueError: `payload` is a decided approval's edit (never a new message).
             TelegramError: the call failed or the reply is not a message in
                 the owner's chat.
         """
+        if payload.approval_outcome is not None:
+            raise ValueError("an approval outcome only ever edits its prompt")
         result = self._client.call(
             "sendMessage",
             {
@@ -196,20 +204,30 @@ class TelegramChannel:
     def resolve(self, message_ref: str, payload: DeliveryPayload) -> None:
         """Replace message `message_ref`'s text with `payload` and drop its answer buttons.
 
+        A decided approval prompt (F-CL5) is edited to the fixed text of its
+        `approval_outcome`, taken from `APPROVAL_OUTCOME_TEXTS` here (never
+        from the payload's text), with an empty keyboard: Approve/Deny go away.
+
         Raises:
-            ValueError: `message_ref` is malformed or not in the owner's chat.
+            ValueError: `message_ref` is malformed or not in the owner's chat,
+                or an approval payload has no outcome (never redraw the buttons).
             TelegramError: the edit failed (except "not modified": done already).
         """
         match = _MESSAGE_REF_RE.fullmatch(message_ref)
         if match is None or int(match.group(1)) != self._chat_id:
             raise ValueError("message ref is not a message in the owner's chat")
+        text = defang(payload.content.text)
+        if payload.approval_id is not None:
+            if payload.approval_outcome is None:
+                raise ValueError("an approval prompt is only edited to its outcome")
+            text = APPROVAL_OUTCOME_TEXTS[payload.approval_outcome]
         try:
             self._client.call(
                 "editMessageText",
                 {
                     "chat_id": self._chat_id,
                     "message_id": int(match.group(2)),
-                    "text": defang(payload.content.text),
+                    "text": text,
                     "reply_markup": reply_markup(payload, self._origin),
                     "link_preview_options": {"is_disabled": True},
                 },
