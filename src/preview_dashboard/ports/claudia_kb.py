@@ -93,6 +93,20 @@ class KbStore(Protocol):
         """
         ...
 
+    def update(self, relpath: str, fn: Callable[[bytes | None], bytes | None]) -> bool:
+        """Read, transform and write one file under a single lock hold.
+
+        `fn(current)` returns the new bytes, or None to leave the file alone.
+        So a concurrent writer's change can't be lost between read and write.
+        Returns True if the file was written.
+
+        Raises:
+            KbBusyError: another process held the KB locks too long.
+            StorageUnavailableError: see `read` and `write`.
+            Exception: whatever `fn` raises (nothing is written).
+        """
+        ...
+
     def run_locked[T](self, fn: Callable[[], T], *, wait_s: float | None = None) -> T:
         """Run `fn` holding the same locks as a write (git work-tree steps, fixcheck-a-2).
 

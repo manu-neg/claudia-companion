@@ -95,6 +95,15 @@ def _owner_text(raw: object, name: str, max_chars: int) -> str:
     return raw
 
 
+def validate_owner_text(raw: object, name: str, max_chars: int) -> str:
+    """Public form of the owner-text check (captions of voice notes / photos, C61).
+
+    Raises:
+        ValidationError: see `MessageSubmission` (`text` rules, `max_chars` cap).
+    """
+    return _owner_text(raw, name, max_chars)
+
+
 def _actor_ref(raw: object) -> str:
     if not isinstance(raw, str) or not _ACTOR_REF_RE.fullmatch(raw):
         raise ValidationError("actor_ref must be 1..64 visible ASCII characters")
@@ -329,9 +338,20 @@ class OwnerNotice(StrEnum):
     CODE_NOT_CHECKED = "code_not_checked"
     # A code message could not be deleted within Telegram's 48 h delete window.
     CODE_NOT_DELETED = "code_not_deleted"
+    # The owner sent a voice note / photo while that input is off (C61; <= 1/hour).
+    MEDIA_OFF = "media_off"
+    # A voice note / photo over a cap, of an unsupported shape or content (C61; <= 1/hour).
+    MEDIA_REFUSED = "media_refused"
 
 
 OWNER_NOTICE_TEXTS: Final = {
+    OwnerNotice.MEDIA_OFF: (
+        "Photos and voice notes are off, so that one was not passed on. Send it as text."
+    ),
+    OwnerNotice.MEDIA_REFUSED: (
+        "That photo or voice note was not passed on: voice notes up to 2 minutes, "
+        "photos (not files) up to 10 MB, one at a time."
+    ),
     OwnerNotice.CODE_NOT_CHECKED: (
         "That code was not checked (message already received). "
         "If you still need to approve, send a new code."

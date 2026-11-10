@@ -14,23 +14,32 @@ from dataclasses import dataclass
 
 from preview_dashboard.adapters.clock import SystemClock
 from preview_dashboard.adapters.kb_reader import FileApprovalsSnapshot, FsKbReader
+from preview_dashboard.application.dashboard_decisions import ForwardedDecisions
 from preview_dashboard.application.kb_graph import KbGraphService
 from preview_dashboard.application.pending_approvals import PendingApprovalsService
 from preview_dashboard.config import Settings
+from preview_dashboard.ports.approval_decisions import ApprovalDecider
 
 
 @dataclass(frozen=True, slots=True)
 class Knowledge:
-    """Knowledge-map use cases; `graph` None = the map is off (every KB route is a 404)."""
+    """Knowledge-map use cases; `graph` None = the map is off (every KB route is a 404).
+
+    `decisions` None = the panel is read-only (no Approve/Deny buttons, the
+    decision route is a 404); set only when `dashboard_decisions_active`
+    and a viewer token is loaded (F-CL6).
+    """
 
     graph: KbGraphService | None
     approvals: PendingApprovalsService
+    decisions: ForwardedDecisions | None = None
 
 
-def build_knowledge(settings: Settings) -> Knowledge:
-    """Wire the KB reader and the approvals snapshot reader from `settings`.
+def build_knowledge(settings: Settings, *, decider: ApprovalDecider | None = None) -> Knowledge:
+    """Wire the KB reader, the approvals snapshot reader and (optionally) decisions.
 
     Nothing is opened here: each request re-checks and re-walks (fail closed at use).
+    Decisions need the snapshot too: the owner must see what he decides.
     """
     clock = SystemClock()
     graph = (
@@ -40,4 +49,11 @@ def build_knowledge(settings: Settings) -> Knowledge:
     )
     snapshot = settings.claudia_approvals_snapshot
     source = FileApprovalsSnapshot(snapshot) if snapshot is not None else None
-    return Knowledge(graph=graph, approvals=PendingApprovalsService(source, clock))
+    decisions = (
+        ForwardedDecisions(decider)
+        if decider is not None and source is not None and settings.dashboard_decisions_active
+        else None
+    )
+    return Knowledge(
+        graph=graph, approvals=PendingApprovalsService(source, clock), decisions=decisions
+    )

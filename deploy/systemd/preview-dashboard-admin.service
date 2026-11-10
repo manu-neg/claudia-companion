@@ -56,10 +56,15 @@ UMask=0007
 # install.sh --claudia writes "--claudia-peer-uid 0 --token-group
 # claudia=pdash-claudiatok --token-group totp=pdash-totp" (the host runs as
 # root; each group is scoped to its one file, C45/C47). Zero words elsewhere.
+# --viewer-peer-uid ${PDASH_VIEWER_UID} --token-group viewer=pdash-viewtok
+# (F-CL6, ADR 0043): only pdash-viewer may call /v1/viewer/* (dashboard
+# Approve/Deny), with viewer.token. Braced like --trusted-sidecar-uid (fail
+# closed when unset). Inert unless dashboard decisions are active: serve-admin
+# then loads no viewer token and does not admit that uid at all (C46).
 EnvironmentFile=/etc/preview-dashboard/viewer-uid.env
 EnvironmentFile=-/etc/preview-dashboard/notifier-admin.env
 EnvironmentFile=-/etc/preview-dashboard/claudia-admin.env
-ExecStart=/opt/preview-dashboard/.venv/bin/preview-dashboard serve-admin --allowed-peer-uid 0 --trusted-sidecar-uid ${PDASH_VIEWER_UID} --token-group admin=pdash $PDASH_NOTIFIER_ADMIN_ARGS $PDASH_CLAUDIA_ADMIN_ARGS
+ExecStart=/opt/preview-dashboard/.venv/bin/preview-dashboard serve-admin --allowed-peer-uid 0 --trusted-sidecar-uid ${PDASH_VIEWER_UID} --token-group admin=pdash --viewer-peer-uid ${PDASH_VIEWER_UID} --token-group viewer=pdash-viewtok $PDASH_NOTIFIER_ADMIN_ARGS $PDASH_CLAUDIA_ADMIN_ARGS
 # PDASH_NOTIFIER_ADMIN_ARGS above only scopes /v1/notifier/* (an HTTP-level
 # check, ADR 0022); the notifier process also has to reach this Unix socket
 # at the filesystem level to get that far. pdash-notify is deliberately NOT

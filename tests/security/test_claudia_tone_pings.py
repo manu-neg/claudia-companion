@@ -118,8 +118,8 @@ def test_c51_every_run_set_gets_the_persona() -> None:
     rig.host.handle_message(message(), generation=0)  # full
     rig.host.close_window(CloseReason.NEW)  # recap
     rig.screen.result = ScreenResult(verdict=ScreenVerdict.FLAGGED)
-    rig.host.handle_message(message(n=2), generation=0)  # read-only
-    order = (ToolSetName.FULL, ToolSetName.RECAP, ToolSetName.READ_ONLY)
+    rig.host.handle_message(message(n=2), generation=0)  # flagged: still full (F-CL8)
+    order = (ToolSetName.FULL, ToolSetName.RECAP, ToolSetName.FULL)
     expected = [TOOL_SETS[n].allowed for n in order]
     assert [r.allowed_tools for r in rig.runner.requests] == expected
     assert all(r.persona.startswith(PERSONA_FRAME) for r in rig.runner.requests)

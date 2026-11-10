@@ -92,8 +92,8 @@ def analyze(notes: Mapping[str, str], today: datetime.date) -> list[Finding]:
 def _oversized(notes: Mapping[str, str], kinds: Mapping[str, NoteKind]) -> list[Finding]:
     out: list[Finding] = []
     for path, kind in kinds.items():
-        if kind is NoteKind.PERSONA:
-            continue  # root's file: never ours to shorten
+        if kind in (NoteKind.PERSONA, NoteKind.GUIDE):
+            continue  # host/root files: never ours to shorten
         try:
             check_note_rules(path, notes[path])
         except KbRefusedError as exc:

@@ -4,8 +4,9 @@ Every message gets the no-AI parser (`domain/screen_rules.py`) and then the
 strict Haiku classifier (no tools, via a `ScreenModelRunner`), with parser
 hits passed as hints. Fail closed: a parser hit, a forwarded flag, a
 `suspicious` verdict, a timeout (after one retry), invalid output or a
-non-zero exit all flag the message; only a missing CLI yields `degraded`
-(chat in the read-only set). One message's error never escapes `screen()`;
+non-zero exit all flag the message; only a missing CLI yields `degraded`.
+A flag never blocks her: it adds a fixed extra-care line (F-CL8).
+One message's error never escapes `screen()`;
 three consecutive screen failures send one `failed` alert. Pure core.
 """
 

@@ -30,6 +30,7 @@ from preview_dashboard.domain.errors import (
     ValidationError,
 )
 from preview_dashboard.domain.models import ensure_utc, is_ulid
+from preview_dashboard.domain.owner_media import MessageKind
 from preview_dashboard.domain.owner_messages import InboxState, OwnerMessage, OwnerMessageId
 from preview_dashboard.domain.query import created_us_to_datetime
 from preview_dashboard.ports.owner_messages import MAX_UNHANDLED_LIMIT
@@ -38,23 +39,25 @@ _log = logging.getLogger(__name__)
 
 _INSERT_SQL = (
     "INSERT INTO owner_messages (id, update_id, telegram_message_id, text, received_us, "
-    "is_forwarded, reply_to_message_id, quote_text, state, handled_us) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "is_forwarded, reply_to_message_id, quote_text, state, handled_us, "
+    "kind, media_id, media_bytes) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 _SELECT_BY_ID_SQL = (
     "SELECT id, update_id, telegram_message_id, text, received_us, is_forwarded, "
-    "reply_to_message_id, quote_text, state, handled_us FROM owner_messages WHERE id = ?"
+    "reply_to_message_id, quote_text, state, handled_us, kind, media_id, media_bytes "
+    "FROM owner_messages WHERE id = ?"
 )
 _SELECT_BY_UPDATE_SQL = (
     "SELECT id, update_id, telegram_message_id, text, received_us, is_forwarded, "
-    "reply_to_message_id, quote_text, state, handled_us FROM owner_messages "
-    "WHERE update_id = ? AND telegram_message_id = ?"
+    "reply_to_message_id, quote_text, state, handled_us, kind, media_id, media_bytes "
+    "FROM owner_messages WHERE update_id = ? AND telegram_message_id = ?"
 )
 # The 'received' literal lets SQLite use the partial index.
 _SELECT_UNHANDLED_SQL = (
     "SELECT id, update_id, telegram_message_id, text, received_us, is_forwarded, "
-    "reply_to_message_id, quote_text, state, handled_us FROM owner_messages "
-    "WHERE state = 'received' ORDER BY received_us, id LIMIT ?"
+    "reply_to_message_id, quote_text, state, handled_us, kind, media_id, media_bytes "
+    "FROM owner_messages WHERE state = 'received' ORDER BY received_us, id LIMIT ?"
 )
 # Compare-and-swap: only a RECEIVED row changes, so the first worker wins.
 _MARK_HANDLED_SQL = (
@@ -63,7 +66,21 @@ _MARK_HANDLED_SQL = (
 )
 _DELETE_BEFORE_SQL = "DELETE FROM owner_messages WHERE received_us < ?"
 
-_Row = tuple[str, int, int, str, int, int, int | None, str | None, str, int | None]
+_Row = tuple[
+    str,
+    int,
+    int,
+    str,
+    int,
+    int,
+    int | None,
+    str | None,
+    str,
+    int | None,
+    str,
+    str | None,
+    int | None,
+]
 
 
 def _log_id(raw: object) -> str:
@@ -88,13 +105,17 @@ def _load(row: _Row) -> OwnerMessage:
         quote_text,
         state,
         handled_us,
+        kind,
+        media_id,
+        media_bytes,
     ) = row
     if is_forwarded not in (0, 1):
         raise ValidationError("invalid forwarded flag in stored row")
     try:
         parsed_state = InboxState(state)
+        parsed_kind = MessageKind(kind)
     except ValueError:
-        raise ValidationError("invalid inbox state in stored row") from None
+        raise ValidationError("invalid inbox state or kind in stored row") from None
     return OwnerMessage(
         id=OwnerMessageId(id_),
         update_id=update_id,
@@ -106,6 +127,9 @@ def _load(row: _Row) -> OwnerMessage:
         quote_text=quote_text,
         state=parsed_state,
         handled_at=None if handled_us is None else created_us_to_datetime(handled_us),
+        kind=parsed_kind,
+        media_id=media_id,
+        media_bytes=media_bytes,
     )
 
 
@@ -148,6 +172,9 @@ class SqliteOwnerMessageStore:
                             message.quote_text,
                             message.state.value,
                             None,
+                            message.kind.value,
+                            message.media_id,
+                            message.media_bytes,
                         ),
                     )
                 except sqlite3.IntegrityError as exc:

@@ -392,7 +392,7 @@ def test_c46_resume_turn_is_built_from_the_stored_request(store: SqliteApprovalS
         current = step
     stored = store.get(request.id)
     assert stored.resume_turn() == (
-        "Approved by the owner via Telegram button + authenticator code: "
+        "Approved by the owner with the authenticator code (Telegram or dashboard): "
         f"Merge PR 1 in owner/repo (request {aid(1)})"
     )
 

@@ -2,7 +2,8 @@
 
 The single definition of the route paths and bodies shared by the admin
 side (`interfaces/admin/claudia_api.py`) and the Claudia host (unit M4):
-inbox long-poll + handled mark, replies, approval requests (create, read,
+inbox long-poll + handled mark, voice/photo bytes fetch + release (C61),
+replies, approval requests (create, read,
 consume, cancel one / cancel all open for `/stop`) and screen health.
 Framework-free (stdlib + domain). Parsers are strict: unknown keys, wrong
 types and out-of-range values raise `ValidationError`, and entities are
@@ -28,6 +29,7 @@ from preview_dashboard.domain.approvals import (
     parse_window_id,
 )
 from preview_dashboard.domain.errors import ValidationError
+from preview_dashboard.domain.owner_media import MessageKind
 from preview_dashboard.domain.owner_messages import (
     InboxState,
     OwnerMessage,
@@ -90,6 +92,10 @@ _MESSAGE_FIELDS: Final = frozenset(
         "quote_text",
         "state",
         "handled_at",
+        # C61: "text" | "voice" | "photo"; media_id / media_bytes null for text.
+        "kind",
+        "media_id",
+        "media_bytes",
     }
 )
 _REPLY_OPTIONAL: Final = frozenset({"message_id", "item_id", "ping"})
@@ -102,6 +108,33 @@ def message_handled_path(message_id: str) -> str:
         ValidationError: not a canonical ULID (no path injection).
     """
     return f"{MESSAGES_PATH}/{parse_owner_message_id(message_id)}/handled"
+
+
+def message_media_path(message_id: str) -> str:
+    """`GET` path of a voice/photo message's checked bytes (C61; id validated first).
+
+    Raises:
+        ValidationError: not a canonical ULID.
+    """
+    return f"{MESSAGES_PATH}/{parse_owner_message_id(message_id)}/media"
+
+
+def message_media_release_path(message_id: str) -> str:
+    """`POST` path (`{}` body) deleting a voice/photo message's bytes once used (C61).
+
+    Raises:
+        ValidationError: not a canonical ULID.
+    """
+    return f"{message_media_path(message_id)}/release"
+
+
+def parse_release_request(raw: object) -> None:
+    """A media release body must be exactly `{}`.
+
+    Raises:
+        ValidationError: any field.
+    """
+    _object(raw, "release request", frozenset())
 
 
 def approval_path(approval_id: str) -> str:
@@ -203,8 +236,17 @@ def _int(raw: object, what: str) -> int:
 
 
 def owner_message_to_json(message: OwnerMessage) -> dict[str, object]:
-    """One inbox message: ids, verbatim (redacted) text, metadata, state."""
+    """One inbox message: ids, verbatim (redacted) text, metadata, state, kind (C61).
+
+    For `voice` / `photo`, `text` is the caption ("" = none), `media_id`
+    the stored file's ULID and `media_bytes` its size; the bytes come from
+    `message_media_path(<message id>)`. All three media keys are null /
+    `"text"` for a text message.
+    """
     return {
+        "kind": str(message.kind),
+        "media_id": message.media_id,
+        "media_bytes": message.media_bytes,
         "id": message.id,
         "update_id": message.update_id,
         "telegram_message_id": message.telegram_message_id,
@@ -234,7 +276,11 @@ def parse_owner_message(raw: object) -> OwnerMessage:
     if not isinstance(forwarded, bool):
         raise ValidationError("is_forwarded must be a bool")
     reply_to = fields["reply_to_message_id"]
+    media_bytes = fields["media_bytes"]
     return OwnerMessage(
+        kind=_enum(MessageKind, fields["kind"], "kind"),
+        media_id=_optional_str(fields["media_id"], "media_id"),
+        media_bytes=None if media_bytes is None else _int(media_bytes, "media_bytes"),
         id=parse_owner_message_id(fields["id"]),
         update_id=_int(fields["update_id"], "update_id"),
         telegram_message_id=_int(fields["telegram_message_id"], "telegram_message_id"),

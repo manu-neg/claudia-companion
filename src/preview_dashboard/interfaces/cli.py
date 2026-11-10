@@ -34,6 +34,7 @@ from preview_dashboard.adapters.fs_blobstore import UnsafeStorageLayoutError
 from preview_dashboard.adapters.sqlite import DatabaseSetupError, UnsafeDatabasePathError
 from preview_dashboard.adapters.stepup_state import StepUpStateError, open_stepup_state
 from preview_dashboard.adapters.totp_secret import TotpSecretFileError, write_totp_secret
+from preview_dashboard.adapters.viewer_decision_client import AdminDecisionClient
 from preview_dashboard.bootstrap import (
     StorageTrust,
     ViewerCore,
@@ -117,7 +118,7 @@ class CliError(Exception):
 
 
 class _ViewerServer(Protocol):
-    def serve(self, core: ViewerCore) -> None: ...
+    def serve(self, core: ViewerCore, *, decider: AdminDecisionClient | None = None) -> None: ...
 
 
 def load_settings() -> Settings:
@@ -250,9 +251,18 @@ def cmd_serve_admin(args: argparse.Namespace, out: TextIO) -> int:
         if settings.claudia_enabled
         else None
     )
+    # And the viewer token (F-CL6): only with dashboard decisions active.
+    viewer_token = (
+        tokens.load(TokenKind.VIEWER, settings.viewer_token_file)
+        if settings.dashboard_decisions_active
+        else None
+    )
     allowed = tuple(args.allowed_peer_uid or ())
     notifier_peers = tuple(args.notifier_peer_uid or ())
     claudia_peers = tuple(args.claudia_peer_uid or ())
+    # No viewer token = no /v1/viewer/* caller: the uid is not admitted either
+    # (the static admin unit always passes it, F-CL6).
+    viewer_peers = tuple(args.viewer_peer_uid or ()) if viewer_token is not None else ()
     with build_core(
         settings, role="admin", trust=_sidecar_trust(args), totp_gids=totp_gids
     ) as core:
@@ -265,14 +275,16 @@ def cmd_serve_admin(args: argparse.Namespace, out: TextIO) -> int:
                 notifier_peer_uids=notifier_peers,
                 claudia_token=claudia_token,
                 claudia_peer_uids=claudia_peers,
+                viewer_token=viewer_token,
+                viewer_peer_uids=viewer_peers,
             )
         except ValueError as exc:
             raise CliError(f"refusing to start: {exc}") from None
-        del token, notifier_token, claudia_token  # the verifiers keep only digests
+        del token, notifier_token, claudia_token, viewer_token  # verifiers keep only digests
         serve(
             app,
             settings.admin_socket,
-            allowed_peer_uids=(*allowed, *notifier_peers, *claudia_peers),
+            allowed_peer_uids=(*allowed, *notifier_peers, *claudia_peers, *viewer_peers),
         )
     return EXIT_OK
 
@@ -289,9 +301,37 @@ def cmd_serve_viewer(args: argparse.Namespace, out: TextIO) -> int:
         ) from None
     server = cast(_ViewerServer, module)
     settings = load_settings()
-    with build_core(settings, role="viewer", trust=_trust(args.trusted_owner_uid or ())) as core:
-        server.serve(core)
+    decider = viewer_decider(settings, _token_groups(args, TokenKind.VIEWER))
+    try:
+        with build_core(
+            settings, role="viewer", trust=_trust(args.trusted_owner_uid or ())
+        ) as core:
+            server.serve(core, decider=decider)
+    finally:
+        if decider is not None:
+            decider.close()
     return EXIT_OK
+
+
+def viewer_decider(settings: Settings, policy: TokenGroupPolicy) -> AdminDecisionClient | None:
+    """The viewer's admin client for dashboard Approve/Deny (F-CL6), or None when off.
+
+    On only when `dashboard_decisions_active` (Claudia on, switch not off) and
+    an approvals snapshot is set (the owner must see what he decides). The
+    viewer token is loaded with the C12 rules (refuse to start on a bad file,
+    I6); the admin socket is verified
+    before every call, so a viewer started before the admin still works.
+
+    Raises:
+        TokenFileError: the viewer token file breaks a C12 rule.
+    """
+    if not settings.dashboard_decisions_active or settings.claudia_approvals_snapshot is None:
+        return None
+    token = TokenLoader(policy).load(TokenKind.VIEWER, settings.viewer_token_file)
+    try:
+        return AdminDecisionClient(settings.admin_socket, token, socket_check=verify_admin_socket)
+    finally:
+        del token  # only the client's default header keeps it
 
 
 def cmd_purge(args: argparse.Namespace, out: TextIO) -> int:
@@ -450,7 +490,20 @@ def cmd_check_config(args: argparse.Namespace, out: TextIO) -> int:
             except TokenFileError as exc:
                 report["claudia_credentials_file"] = str(exc)
                 status = EXIT_FAILED
+        if settings.dashboard_decisions_active:
+            # serve-admin verifies it; serve-viewer presents it (F-CL6).
+            try:
+                tokens.load(TokenKind.VIEWER, settings.viewer_token_file)
+                report["viewer_credentials_file"] = "ok"
+            except TokenFileError as exc:
+                report["viewer_credentials_file"] = str(exc)
+                status = EXIT_FAILED
     report["claudia_enabled"] = settings.claudia_enabled
+    # The effective value (switch on and Claudia on): check.sh wires/warns on it.
+    report["claudia_dashboard_decisions"] = settings.dashboard_decisions_active
+    # C61/C62: check.sh warns when voice input is on without the whisper install.
+    report["claudia_voice_input_enabled"] = settings.claudia_voice_input_enabled
+    report["claudia_photo_input_enabled"] = settings.claudia_photo_input_enabled
     # Names only: check.sh warns when Claudia is on but the viewer panel has no snapshot path.
     report["claudia_approvals_snapshot_set"] = settings.claudia_approvals_snapshot is not None
     json.dump(report, out, sort_keys=True, indent=2)
@@ -773,7 +826,8 @@ def _add_token_group(parser: argparse.ArgumentParser) -> None:
         action="append",
         metavar="[KIND=]GROUP",
         help="extra group allowed to own a token file (repeatable). KIND=GROUP "
-        "(admin, notifier, telegram, claudia) trusts it for that file only; a plain GROUP may "
+        "(admin, notifier, telegram, claudia, viewer) trusts it for that file only; a plain "
+        "GROUP may "
         "own at most one of the files this command loads. Root is always allowed; "
         "this process's own group only for its own token (admin, or telegram for the "
         "notifier). serve-admin also takes totp=GROUP: the TOTP secret's own group",
@@ -817,6 +871,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         help="socket peer uid allowed on /v1/claudia/* (the Claudia host's user; repeatable)",
     )
+    admin.add_argument(
+        "--viewer-peer-uid",
+        type=_uid,
+        action="append",
+        help="socket peer uid allowed on /v1/viewer/* (the viewer service user, for "
+        "dashboard Approve/Deny; repeatable)",
+    )
     _add_token_group(admin)
     _add_trusted_sidecar_uid(admin)
     admin.set_defaults(func=cmd_serve_admin)
@@ -847,6 +908,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         help="extra uid allowed to own the data dir (the admin service's uid)",
     )
+    # F-CL6: viewer.token's group (viewer=GROUP), read only with claudia_dashboard_decisions.
+    _add_token_group(viewer)
     viewer.set_defaults(func=cmd_serve_viewer)
 
     notifier = sub.add_parser(

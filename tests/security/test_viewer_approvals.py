@@ -84,7 +84,7 @@ def test_route_serves_the_snapshot(tmp_path: Path) -> None:
 def test_route_without_snapshot_is_none(tmp_path: Path) -> None:
     response = kb_client(None).get("/api/claudia/approvals", headers=owner_headers())
     assert response.status_code == 200
-    assert response.json() == {"available": False, "approvals": []}
+    assert response.json() == {"available": False, "approvals": [], "decisions": False}
 
 
 def test_expired_entries_are_dropped(tmp_path: Path) -> None:

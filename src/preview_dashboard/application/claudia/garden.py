@@ -214,6 +214,8 @@ class Gardener:
                 continue
             if kind is NoteKind.PERSONA:
                 out.append("persona.md was changed")
+            elif kind is NoteKind.GUIDE:
+                out.append("guide.md was changed")
             elif entry.status == "D":
                 if kind in (NoteKind.INDEX, NoteKind.NOW):
                     out.append(f"{label}: must not be deleted")

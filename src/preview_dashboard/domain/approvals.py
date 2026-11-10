@@ -395,8 +395,9 @@ class ApprovalRequest:
             InvalidStateError: the request is neither CONSUMED nor DENIED.
         """
         if self.state is ApprovalState.CONSUMED:
+            # F-CL6: Telegram or the dashboard; the source is not stored, so not named.
             return (
-                "Approved by the owner via Telegram button + authenticator code: "
+                "Approved by the owner with the authenticator code (Telegram or dashboard): "
                 f"{self.action_text} (request {self.id})"
             )
         if self.state is ApprovalState.DENIED:

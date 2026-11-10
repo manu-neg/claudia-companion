@@ -183,6 +183,8 @@ class TokenKind(StrEnum):
     TELEGRAM = "telegram"
     # Claudia host's admin-API token (ADR 0031, C45).
     CLAUDIA = "claudia"
+    # The viewer's token for the dashboard-decision route (F-CL6, ADR 0043).
+    VIEWER = "viewer"
 
     @property
     def label(self) -> str:
@@ -196,6 +198,7 @@ _LABELS: Mapping[TokenKind, str] = MappingProxyType(
         TokenKind.NOTIFIER: "notifier token",
         TokenKind.TELEGRAM: "telegram bot token",
         TokenKind.CLAUDIA: "claudia token",
+        TokenKind.VIEWER: "viewer token",
     }
 )
 

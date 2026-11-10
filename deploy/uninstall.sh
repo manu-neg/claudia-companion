@@ -18,7 +18,8 @@ VIEWER_USER="pdash-viewer"
 NOTIFY_USER="pdash-notify"
 NOTIFY_TOK_GROUP="pdash-notifytok"
 # Claudia (M9, ADR 0036): removed unconditionally like the notifier.
-CLAUDIA_GROUPS=(pdash-claudiatok pdash-totp pdash-kb)
+# pdash-viewtok: viewer.token's group (F-CL6, ADR 0043).
+CLAUDIA_GROUPS=(pdash-claudiatok pdash-totp pdash-kb pdash-viewtok)
 
 DRY_RUN=0
 PURGE_DATA=0
@@ -81,6 +82,9 @@ for unit in preview-dashboard-admin.service preview-dashboard-viewer.service \
     claudia-host.service claudia-gardener.service claudia-gardener.timer; do
     run rm -f "$SYSTEMD_DIR/$unit"
 done
+# F-CL6 drop-in (Claudia hosts); rmdir only if nothing else is in it.
+run rm -f "$SYSTEMD_DIR/preview-dashboard-viewer.service.d/claudia-decisions.conf"
+run rmdir "$SYSTEMD_DIR/preview-dashboard-viewer.service.d" || true
 run systemctl daemon-reload
 run systemctl reset-failed || true
 

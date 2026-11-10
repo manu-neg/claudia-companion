@@ -197,7 +197,7 @@ All entities are frozen, slotted dataclasses that validate on construction
 | `MessageContent` | `text, buttons, link` — channel-neutral message | text 1..300 (C35); `long_form=True` (set only by `reply`/`voice`, C56) allows 1..4096 UTF-16 units and no buttons; no control (except `\n`)/bidi/surrogate/private-use chars; ≤ 8 `MessageButton`s, unique keys; link only `https://host/...` (built by `DashboardLinks`) |
 | `Notification` | `id, event_type, title, created_at, item_id, question_id` | title sanitized 1..200; only question notifications carry `question_id` |
 | `DeliveryTask` | `id, notification_id, channel, action (SEND/RESOLVE), content, created_at, next_attempt_at, state (PENDING/DONE/FAILED), attempts, message_ref, final_state` | attempts 0..8; `message_ref` (≤ 64 visible ASCII) only when DONE; RESOLVE has a terminal `final_state` and no buttons |
-| `DeliveryPayload` / `PendingTask` | what the notifier receives (`content, question_id, final_state` / `id, channel, action, payload, message_ref`) | buttons and `final_state` need a `question_id`; RESOLVE needs `message_ref` + `final_state`, SEND neither |
+| `DeliveryPayload` / `PendingTask` | what the notifier receives (`content, question_id, final_state, approval_id, approval_outcome, voice_id` / `id, channel, action, payload, message_ref`) | buttons and `final_state` need a `question_id`; an approval payload never has `final_state`; `approval_outcome` (F-CL5) needs an `approval_id` and exactly its fixed text; RESOLVE needs `message_ref` + its outcome (`final_state`, or `approval_outcome` for an approval), SEND neither |
 
 ```
           answered(key, source, at)  [OPEN, key offered, at < expires_at]
@@ -471,8 +471,11 @@ Interfaces receive a core, never adapters: `interfaces/admin/app.build_admin_app
 | `notifier_api.py` | `/v1/notifier/tasks` (long-poll, one poller), `.../done`, `.../failed`, `/v1/notifier/answers` (the only path to `QuestionService.answer`); M3: `/v1/notifier/messages` (inbox, refusals → 422), `/approvals` (Approve/Deny tap), `/codes` (TOTP, the only path to APPROVED) — notifier token |
 | `claudia_api.py` | `/v1/claudia/messages` (`?wait=0..60&limit=1..20`, one poller) + `/{id}/handled`, `/replies`, `/approvals` (create, always PENDING), `/approvals/{id}` (`?wait`), `/approvals/{id}/consume` (single use), `/health` — claudia token; 400 when `claudia_enabled` is off (C45) |
 | `longpoll.py` | `WaiterSlots` (16 question waiters, 1 notifier poller, 1 Claudia inbox poller, 4 approval waiters), `long_poll` (event-loop wait, 5 s re-read, stops on client disconnect) |
+| `viewer_api.py` | F-CL6 (ADR 0043): `POST /v1/viewer/approvals/{id}/decision` → `ClaudiaCore.decisions` (`DashboardDecisionService`: budget, Deny CAS, Approve via `StepUpService.submit_dashboard_code`) — viewer token only |
 
-**Token families (C45):** `auth.route_family(path)` maps `/v1/notifier/*` → notifier, `/v1/claudia/*` → claudia, everything else → admin. Wrong family 403, no/unknown token 401; the three tokens must differ (startup refuses). Peer-uid allowlists are per family (`--claudia-peer-uid`).
+**Token families (C45):** `auth.route_family(path)` maps `/v1/notifier/*` → notifier, `/v1/claudia/*` → claudia, `/v1/viewer/*` → viewer (F-CL6), everything else → admin. Wrong family 403, no/unknown token 401; the tokens must differ (startup refuses). Peer-uid allowlists are per family (`--claudia-peer-uid`, `--viewer-peer-uid`).
+
+**Dashboard decisions (F-CL6, ADR 0043):** the viewer's only path to the admin. `routes/kb.py` `POST /api/claudia/approvals/{id}/decision` (C4 stack) → `Knowledge.decisions` (`application/dashboard_decisions.ForwardedDecisions`: shape already checked by `wire/viewer_decisions`, click budget) → `ports/approval_decisions.ApprovalDecider` = `adapters/viewer_decision_client.AdminDecisionClient` (viewer token, socket re-verified per call) → the admin route above. Wired by `cli.viewer_decider` only when `Settings.dashboard_decisions_active` (Claudia on, switch default true) and a snapshot path is set.
 
 **Claudia application services (M3, `bootstrap.ClaudiaCore`):**
 
@@ -802,6 +805,8 @@ Migration 5 (M3 + A1, ADR 0031/0033) adds only outbox columns: `delivery_tasks.l
 owner_messages (id PK, update_id, telegram_message_id, text, received_us, is_forwarded 0/1,
                 reply_to_message_id NULL, quote_text NULL, state received|handled, handled_us NULL,
                 UNIQUE (update_id, telegram_message_id)) STRICT
+  + schema 2 (F-CL4 A, C61, additive ALTERs; v1 rows load as text):
+    kind text|voice|photo DEFAULT 'text', media_id NULL (ULID of the file), media_bytes NULL (>= 1)
 approval_requests (id PK, window_id, kind action|flagged_message|peer_message, action_kind NULL,
                    action_target NULL, action_text, message_id NULL (no FK), state (7 values),
                    created_us, expires_us, updated_us, tapped_us, approved_us, resolved_us) STRICT
@@ -1013,6 +1018,13 @@ kinds exist and how to render them.
 | `application/claudia/voice.py` | `VoiceComposer` (policy + scan → language pick ES/EN → speak; > 700 chars or audio over 60 s / 1 MiB → leading sentences + fixed pointer, full text still sent), `VoiceService` (admin: audio checked first, text via the reply path, audio kept per reply id until `release`), `VoiceToggle` (`/voice` state for M4b) |
 | `adapters/piper_tts.py` | `PiperTextToSpeech`: models `es_MX-claude-high` / `en_US-amy-medium` from a configured dir only, resample 22.05 → 24 kHz, `soundfile` writes OGG/Opus in memory; imports are lazy so the base install works without the extra |
 | `adapters/voice_store.py` | `FsVoiceStore`: `<ULID>.ogg`, dir 0700 / files 0600, ≤ 50 waiting, deleted on delivery / give-up and by `purge_older_than` |
+| `domain/owner_media.py` | C61: `MessageKind`, voice/photo caps, `check_ogg_opus` (shared with `events/voice.py`), `sanitize_jpeg` (byte-wise APPn/COM strip, no image library) |
+| `ports/owner_media.py`, `adapters/media_store.py` | `OwnerMediaStore` / `FsOwnerMediaStore`: `<claudia dir>/media/<ULID>.ogg\|.jpg`, 0700 / 0600, dir-fd + `O_NOFOLLOW`, swept after 23 h |
+| `application/owner_media.py` | `OwnerMediaService`: receive (owner + switch + content check → file → inbox row), fetch by message id, release |
+| `wire/notifier_media.py`, `adapters/telegram/files.py` | `POST /v1/notifier/media` format; `TelegramMediaFiles` (`getFile` + bounded download) |
+| Host contract (unit B) | `GET /v1/claudia/messages` items carry `kind`, `media_id`, `media_bytes` (caption in `text`, `""` = none); bytes via `GET /v1/claudia/messages/{id}/media` (`audio/ogg` / `image/jpeg`), freed via `POST …/media/release` `{}` (`ClaudiaAdminClient.fetch_media` / `release_media`) |
+| `ports/claudia_media.py`, `application/claudia/media_input.py` | C62: `HostMedia`, `Transcriber`, `RunMediaFiles` ports; `MediaInput` turns a voice row into its transcript text (same screen as typed text) and a photo row into its caption + a framed work-dir file; read-only photo turns unless `claudia_photo_turn_tools = full` |
+| `adapters/whisper_sandbox.py`, `adapters/voice_decode.py`, `adapters/run_media.py` | C62: pin check of `/opt/claudia-whisper`, `systemd-run` sandbox argv (decode module + whisper-cli), `SandboxTranscriber`; the in-sandbox Ogg/Opus → 16 kHz WAV decode; `WorkdirPhotoFiles` (`<workdir>/<window>/media/<ULID>.jpg`, start sweep) |
 | `ports/claudia_voice.py`, `wire/claudia_voice.py` | `TextToSpeech`, `VoiceStore` ports; `POST /v1/claudia/voice` body `{text, audio (base64), message_id?, item_id?}` (own body cap, audio ≤ 1 MiB) |
 
 Licences: `piper-tts` and espeak-ng are GPL-3.0 and a runtime dependency only (never vendored); each Piper voice has its own model-card licence.

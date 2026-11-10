@@ -1,7 +1,8 @@
 """Notification ports: the admin-side outbox and the notifier-side plug-ins (ADR 0021).
 
 Admin side: `NotificationOutbox` (persistence of notifications and their
-deliveries) and `OutboxEvents` (wakes the notifier's long-poll). Notifier
+deliveries), `ApprovalResolveOutbox` (edits of decided approval prompts,
+F-CL5) and `OutboxEvents` (wakes the notifier's long-poll). Notifier
 side, which has no database: `DeliveryQueue` (the admin API as seen by the
 notifier), `NotificationChannel` (e.g. Telegram), `AnswerSource` (button
 taps). Contract suite for the outbox: `tests/contracts/` (unit N2).
@@ -9,19 +10,21 @@ taps). Contract suite for the outbox: `tests/contracts/` (unit N2).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
+from preview_dashboard.domain.approvals import ApprovalId
 from preview_dashboard.domain.notifications import (
     DeliveryPayload,
     DeliveryTask,
+    MessageContent,
     Notification,
     PendingTask,
     TaskId,
 )
-from preview_dashboard.domain.questions import AnswerResult, QuestionId
+from preview_dashboard.domain.questions import AnswerResult, QuestionId, QuestionState
 
 # --- admin side ---------------------------------------------------------------
 
@@ -102,6 +105,37 @@ class NotificationOutbox(Protocol):
 
         Returns:
             How many notifications were deleted.
+        """
+        ...
+
+
+class ApprovalResolveOutbox(Protocol):
+    """Queues the edit of a decided approval prompt (F-CL5, C46); same store as the outbox.
+
+    `pending` hands such a RESOLVE out only once the request is decided,
+    with the fixed text of the request's state as stored in the admin-only
+    database (never the row's text); a RESOLVE seen while the request is
+    still undecided can only be forged and is marked FAILED.
+    """
+
+    def add_approval_resolves(
+        self,
+        approval_id: ApprovalId,
+        *,
+        content: MessageContent,
+        final_state: QuestionState,
+        now: datetime,
+        new_task_id: Callable[[], TaskId],
+    ) -> int:
+        """Add one RESOLVE per channel the request's prompt went out on; return how many.
+
+        Only channels whose prompt SEND is PENDING, or DONE with a message
+        ref, get one (nothing else could ever be edited). No prompt
+        notification, or more than one (forged), adds nothing.
+
+        Raises:
+            ValidationError: `content` has buttons or a link.
+            AlreadyExistsError: a generated task id exists.
         """
         ...
 

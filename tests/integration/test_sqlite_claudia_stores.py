@@ -138,9 +138,9 @@ def _set_version(path: Path, version: int) -> None:
 
 
 class TestClaudiaSchema:
-    def test_schema_1_has_every_table_and_index(self, db_path: Path) -> None:
-        assert CLAUDIA_SCHEMA_VERSION == 1
-        assert _version(db_path) == 1
+    def test_schema_2_has_every_table_and_index(self, db_path: Path) -> None:
+        assert CLAUDIA_SCHEMA_VERSION == 2
+        assert _version(db_path) == 2
         assert set(_CLAUDIA_OBJECTS) <= _tables(db_path)
         conn = connect_claudia(db_path)
         try:
@@ -197,9 +197,56 @@ class TestClaudiaSchema:
     @pytest.mark.parametrize("create", [True, False])
     def test_newer_schema_is_refused_by_every_role(self, db_path: Path, create: bool) -> None:
         _set_version(db_path, CLAUDIA_SCHEMA_VERSION + 1)
-        with pytest.raises(DatabaseSetupError, match="version 2"):
+        with pytest.raises(DatabaseSetupError, match="version 3"):
             connect_claudia(db_path, create=create)
         assert _version(db_path) == CLAUDIA_SCHEMA_VERSION + 1  # untouched
+
+    def test_migration_2_keeps_schema_1_rows_as_text(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A v1 file with a stored message (the live layout before C61) ...
+        path = default_claudia_db_path(tmp_path)
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                claudia_db, "_CLAUDIA_MIGRATIONS", ((1, claudia_db._claudia_migration_1),)
+            )
+            patch.setattr(claudia_db, "CLAUDIA_SCHEMA_VERSION", 1)
+            conn = connect_claudia(path)
+            try:
+                conn.execute(
+                    "INSERT INTO owner_messages (id, update_id, telegram_message_id, text,"
+                    " received_us, is_forwarded, state)"
+                    " VALUES (?, 5, 50, 'hello from v1', ?, 0, 'received')",
+                    (mid(1), int(T0.timestamp() * 1_000_000)),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        assert _version(path) == 1
+        # ... migrates additively and the old row loads as a text message.
+        connect_claudia(path).close()
+        assert _version(path) == 2
+        (row,) = SqliteOwnerMessageStore(_factory(path)).list_unhandled(10)
+        assert (row.text, row.kind.value, row.media_id, row.media_bytes) == (
+            "hello from v1",
+            "text",
+            None,
+            None,
+        )
+
+    def test_media_columns_are_checked_by_the_schema(self, db_path: Path) -> None:
+        conn = connect_claudia(db_path)
+        try:
+            for kind, size in (("video", None), ("voice", 0)):
+                with pytest.raises(sqlite3.IntegrityError):
+                    conn.execute(
+                        "INSERT INTO owner_messages (id, update_id, telegram_message_id, text,"
+                        " received_us, is_forwarded, state, kind, media_bytes)"
+                        " VALUES (?, 6, 60, '', 1, 0, 'received', ?, ?)",
+                        (mid(2), kind, size),
+                    )
+        finally:
+            conn.close()
 
     def test_purge_role_connections_use_the_tables(self, db_path: Path) -> None:
         SqliteOwnerMessageStore(_factory(db_path)).add(make_message(1))

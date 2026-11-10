@@ -60,6 +60,8 @@ class ClaudiaApp:
     notifier_token: str
     claudia_token: str
     secret_path: Path
+    # F-CL6: accepted on /v1/viewer/* only when `with_viewer_token` was set.
+    viewer_token: str = ""
 
     @property
     def claudia(self) -> ClaudiaCore:
@@ -89,6 +91,8 @@ def claudia_app(
     claudia_peer_uids: Sequence[int] = (),
     real_prompts: bool = False,
     totp_gids: Sequence[int] | None = None,
+    with_viewer_token: bool = False,
+    viewer_peer_uids: Sequence[int] = (),
     **overrides: Any,
 ) -> Iterator[ClaudiaApp]:
     """Yield a fresh admin app with Claudia enabled (real core over `tmp_path`).
@@ -113,7 +117,7 @@ def claudia_app(
         write_totp_secret(secret_path, TEST_SECRET, gid=None, replace=False)
     clock = FixedClock()
     prompts = RecordingPrompts()
-    tokens = [secrets.token_urlsafe(32) for _ in range(3)]
+    tokens = [secrets.token_urlsafe(32) for _ in range(4)]
     wired = None if real_prompts else prompts
     gids = (os.getegid(),) if totp_gids is None else tuple(totp_gids)
     with build_core(
@@ -127,6 +131,8 @@ def claudia_app(
             allowed_peer_uids=allowed_peer_uids,
             notifier_peer_uids=notifier_peer_uids,
             claudia_peer_uids=claudia_peer_uids,
+            viewer_token=tokens[3].encode() if with_viewer_token else None,
+            viewer_peer_uids=viewer_peer_uids,
         )
         yield ClaudiaApp(
             app=app,
@@ -137,6 +143,7 @@ def claudia_app(
             notifier_token=tokens[1],
             claudia_token=tokens[2],
             secret_path=secret_path,
+            viewer_token=tokens[3],
         )
 
 

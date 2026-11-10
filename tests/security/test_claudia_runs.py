@@ -22,6 +22,8 @@ from preview_dashboard.adapters.claude_cli import (
     parse_run_output,
 )
 from preview_dashboard.application.claudia.runs import (
+    DEGRADED_LINE,
+    FLAGGED_LINE,
     KNOWN_BUILTINS,
     REPLY_MAX_CHARS,
     RUN_FAILED_TEXT,
@@ -91,7 +93,7 @@ GOLDEN_FULL = [
     *PREFIX,
     TOOLS_FULL,
     f"--allowedTools={READS},{MUTATING},TodoWrite,{DASH_READ},{DASH_WRITE},"
-    f"{K}kb_read,{K}kb_write,{K}kb_delete,{K}request_approval",
+    f"{K}kb_read,{K}kb_write,{K}kb_delete,{K}request_approval,{K}cancel_approval",
     f"--disallowedTools={TELEGRAM}",
     "--resume",
     WINDOW_A,
@@ -101,7 +103,7 @@ GOLDEN_READ_ONLY = [
     TOOLS_READ_ONLY,
     f"--allowedTools={READS},{DASH_READ},{K}kb_read",
     f"--disallowedTools={MUTATING},{DASH_WRITE},{K}kb_write,{K}kb_delete,"
-    f"{K}request_approval,{TELEGRAM}",
+    f"{K}request_approval,{K}cancel_approval,{TELEGRAM}",
     "--session-id",
     WINDOW_A,
 ]
@@ -275,11 +277,14 @@ def test_c51_window_ids_are_host_generated_uuids() -> None:
     ("verdict", "expected"),
     [
         (ScreenVerdict.OK, ToolSetName.FULL),
-        (ScreenVerdict.FLAGGED, ToolSetName.READ_ONLY),
-        (ScreenVerdict.DEGRADED, ToolSetName.READ_ONLY),
+        # F-CL8: a flag never downgrades the set; the C59 hook gates risky steps.
+        (ScreenVerdict.FLAGGED, ToolSetName.FULL),
+        (ScreenVerdict.DEGRADED, ToolSetName.FULL),
     ],
 )
-def test_c51_tool_set_follows_the_screen(verdict: ScreenVerdict, expected: ToolSetName) -> None:
+def test_c51_fcl8_verdict_never_narrows_the_tool_set(
+    verdict: ScreenVerdict, expected: ToolSetName
+) -> None:
     assert tool_set_for(ScreenResult(verdict=verdict)).name is expected
     rig = host_rig(screen=FakeScreen(result=ScreenResult(verdict=verdict)))
     rig.host.handle_message(message("hola", 1), generation=0)
@@ -296,7 +301,7 @@ def test_c51_flagged_prompt_quotes_the_text_between_nonce_markers() -> None:
     result = ScreenResult(verdict=ScreenVerdict.FLAGGED, parser_hits=("instruction", "BAD hit!"))
     prompt = build_prompt(message(text), result, "a1b2c3")
     lines = prompt.split("\n")
-    assert lines[0].startswith("[Host note] The screen flagged")
+    assert lines[0] == FLAGGED_LINE
     assert "Screen reasons: instruction" in prompt
     assert "BAD hit!" not in prompt  # only fixed labels pass
     start = lines.index("<<<owner-message a1b2c3>>>")
@@ -314,14 +319,16 @@ def test_c51_degraded_prompt_says_unscreened() -> None:
     assert "unscreened" in prompt
 
 
-def test_c51_screen_exception_fails_closed_to_read_only() -> None:
+def test_c51_fcl8_screen_exception_runs_as_unscreened_with_the_care_line() -> None:
     class Exploding(FakeScreen):
         def screen(self, message):
             raise RuntimeError("boom")
 
     rig = host_rig(screen=Exploding())
     rig.host.handle_message(message("hola", 1), generation=0)
-    assert rig.runner.requests[0].allowed_tools == TOOL_SETS[ToolSetName.READ_ONLY].allowed
+    request = rig.runner.requests[0]
+    assert request.allowed_tools == TOOL_SETS[ToolSetName.FULL].allowed
+    assert request.prompt.split("\n")[0] == DEGRADED_LINE
 
 
 def test_c51_real_runner_sends_golden_argv_and_prompt_on_stdin(tmp_path: Path) -> None:

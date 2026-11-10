@@ -19,9 +19,9 @@ sources: [kind:ref@version]
 
 Steps:
 1. `kb_read` `now.md` and `index.md`.
-2. Write one journal entry for this window (at most 10 bullets).
+2. Write one journal entry for this window (at most 10 bullets); list the topics discussed, each with a [[topics/<category>/<note>]] link.
 3. Update `now.md`: current work, open threads, things waiting on the owner.
-4. Fold lasting lessons, preferences and finished work into topic notes and the work-log; add a line to `index.md` for any new category.
+4. Fold the topics, ideas, decisions, preferences and plans discussed in this window, plus lasting lessons and finished work, into topic notes (create or update `topics/<category>/<note>.md`) and the work-log; make sure `index.md` links each note and new category. Small talk needs no note.
 5. If a write is refused, read the reason, shorten or fix the note, and write again.
 
 Reply with one short sentence when done.

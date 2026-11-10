@@ -1,0 +1,14 @@
+# deploy/claudia/whisper.sha256 — pinned SHA-256 of what `install.sh --whisper`
+# builds for voice-note transcription (F-CL4, C62, ADR 0042).
+# Format: `<64 lowercase hex>  <role>`, one line per role, roles `tarball`
+# and `model` (not sha256sum -c file names). This repo file pins only the two
+# inputs. The binary's hash does not exist before the build, so install.sh
+# writes it, after building, into the INSTALLED copy
+# /opt/claudia-whisper/whisper.sha256, which then holds `binary` and `model`
+# lines (plus a `# tarball <hex>` comment); the host checks that copy.
+# tarball: whisper.cpp v1.9.5 source
+#   https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.9.5.tar.gz
+# model: ggml-base.bin, 147951465 bytes (Hugging Face ggerganov/whisper.cpp)
+#   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+ff1a9053feb509ff9d7729703355541ae9690073a6b1c40eb692c962e0dc1720  tarball
+60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe  model

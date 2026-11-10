@@ -5,7 +5,8 @@ notifier and the admin share: who may send (`is_owner_private_message`),
 what is an authenticator code (`is_code_message`) and the redaction of
 code-like digit runs inside any other text (`redact_code_runs`). The text
 is untrusted and kept verbatim apart from that redaction, so the screen
-(C48) still sees invisible and look-alike characters.
+(C48) still sees invisible and look-alike characters. Voice notes and
+photos (C61) are rows of their own `kind` whose text is the caption.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from typing import NewType
 
 from preview_dashboard.domain.errors import InvalidStateError, ValidationError
 from preview_dashboard.domain.models import ensure_utc, is_ulid
+from preview_dashboard.domain.owner_media import MessageKind, media_max_bytes
 
 OwnerMessageId = NewType("OwnerMessageId", str)
 """Canonical ULID string, assigned by the admin when it stores the message."""
@@ -258,21 +260,41 @@ class InboxState(StrEnum):
     HANDLED = "handled"
 
 
+def _check_media(kind: MessageKind, media_id: object, media_bytes: object) -> None:
+    """A text row has no media ref; a voice/photo row has a ULID ref and a size within its cap."""
+    if not kind.is_media:
+        if media_id is not None or media_bytes is not None:
+            raise ValidationError("a text message has no media")
+        return
+    if not is_ulid(media_id):
+        raise ValidationError("a media message needs a media id")
+    cap = media_max_bytes(kind)
+    if isinstance(media_bytes, bool) or not isinstance(media_bytes, int):
+        raise ValidationError("media_bytes must be an integer")
+    if not 1 <= media_bytes <= cap:
+        raise ValidationError(f"media_bytes must be 1..{cap}")
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class OwnerMessage:
-    """One owner text message in the inbox, as the admin stores it (C44).
+    """One owner message in the inbox, as the admin stores it (C44, C61).
 
     Identity for idempotency is the Telegram pair (`update_id`,
     `telegram_message_id`): a re-delivered update is stored once. `text`
     and `quote_text` are excluded from `repr`, so logging the object never
-    logs message content (C29).
+    logs message content (C29). `kind` is `text`, or `voice` / `photo`
+    (C61): then `text` is the caption ("" = none) and `media_id` /
+    `media_bytes` name the checked file in the admin's media store.
 
     Invariants (`ValidationError` on construction):
     - `id` canonical ULID; `update_id >= 0`, `telegram_message_id >= 1`,
       `reply_to_message_id` None or >= 1;
     - `text`: 1..20480 chars (4096 before redaction, 5x), not blank, no NUL
       or lone surrogate, not an authenticator code, no unredacted code-like
-      run; `quote_text` None or the same rules with 1..5120 chars;
+      run; `quote_text` None or the same rules with 1..5120 chars; a media
+      message may have `text == ""` (no caption);
+    - text: no media ref; voice/photo: `media_id` a ULID, `media_bytes`
+      1..the kind's cap (2 MiB / 10 MiB);
     - datetimes tz-aware (stored UTC); RECEIVED has no `handled_at`,
       HANDLED has `handled_at >= received_at`.
     """
@@ -287,6 +309,9 @@ class OwnerMessage:
     quote_text: str | None = field(default=None, repr=False)
     state: InboxState = InboxState.RECEIVED
     handled_at: datetime | None = None
+    kind: MessageKind = MessageKind.TEXT
+    media_id: str | None = None
+    media_bytes: int | None = None
 
     def __post_init__(self) -> None:
         parse_owner_message_id(self.id)
@@ -294,10 +319,18 @@ class OwnerMessage:
         _check_telegram_id(self.telegram_message_id, "telegram_message_id", minimum=1)
         if self.reply_to_message_id is not None:
             _check_telegram_id(self.reply_to_message_id, "reply_to_message_id", minimum=1)
+        try:
+            object.__setattr__(self, "kind", MessageKind(self.kind))
+        except ValueError:
+            raise ValidationError("invalid message kind") from None
+        _check_media(self.kind, self.media_id, self.media_bytes)
         # Checked first: a code must be refused as a code, not as a redaction miss.
         if is_code_message(self.text):
             raise ValidationError("an authenticator code never enters the inbox")
-        _check_untrusted_text(self.text, name="message text", max_chars=STORED_MESSAGE_MAX_CHARS)
+        if not (self.kind.is_media and self.text == ""):
+            _check_untrusted_text(
+                self.text, name="message text", max_chars=STORED_MESSAGE_MAX_CHARS
+            )
         if self.quote_text is not None:
             _check_untrusted_text(self.quote_text, name="quote", max_chars=STORED_QUOTE_MAX_CHARS)
         if not isinstance(self.is_forwarded, bool):

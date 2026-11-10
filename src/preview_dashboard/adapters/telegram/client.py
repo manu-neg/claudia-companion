@@ -2,7 +2,8 @@
 
 `BotToken` wraps the secret (redacted repr); `TelegramBotClient` posts JSON
 (or, for `sendVoice` only, one bounded multipart file) to the fixed base
-URL `https://api.telegram.org`, with `trust_env=False`,
+URL `https://api.telegram.org`, and downloads `getFile` files from the same
+host with a hard byte cap (C61), with `trust_env=False`,
 TLS verification, no redirects, bounded response sizes and timeouts. The
 token is never logged: URLs are never logged, the `httpx`/`httpcore`
 loggers are kept at WARNING, and errors carry only the method name, the
@@ -30,11 +31,31 @@ METHODS: Final = frozenset(
         "getMe",
         "deleteMessage",  # code messages (C44, C47)
         "sendVoice",  # Claudia's voice replies (C56)
+        "getFile",  # the owner's voice notes / photos (C61), then `download`
     }
 )
+# `getFile` paths look like `voice/file_12.oga` / `photos/file_3.jpg`: a few
+# plain segments, no `..`, nothing that could leave the `/file/bot<token>/` prefix.
+_FILE_PATH_RE = re.compile(r"[A-Za-z0-9_-]{1,64}(/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}){1,3}")
+_DOWNLOAD_READ_TIMEOUT: Final = 60.0
+
+
+def validate_file_path(raw: object) -> str:
+    """A Telegram `file_path` safe to append to the download URL (C61).
+
+    Raises:
+        ValueError: not a short relative path of plain segments, or any `..`.
+    """
+    if not isinstance(raw, str) or not _FILE_PATH_RE.fullmatch(raw) or ".." in raw:
+        raise ValueError("telegram file path has an unexpected format")
+    return raw
+
+
 # Methods that may carry a file (multipart); everything else is JSON only.
 UPLOAD_METHODS: Final = frozenset({"sendVoice"})
 MAX_UPLOAD_BYTES: Final = 1024 * 1024
+# Owner photos are <= 10 MiB (C61); nothing larger is ever downloaded.
+MAX_DOWNLOAD_BYTES: Final = 10 * 1024 * 1024
 _UPLOAD_READ_TIMEOUT: Final = 60.0
 _FIELD_NAME_RE = re.compile(r"[a-z_]{1,32}")
 MAX_RESPONSE_BYTES: Final = 1024 * 1024
@@ -88,6 +109,10 @@ class TelegramError(RuntimeError):
         self.status = status
         self.description = description
         self.retry_after = retry_after
+
+
+class TelegramFileTooLargeError(TelegramError):
+    """A file download went past its cap and was aborted (C61); retrying cannot help."""
 
 
 class BotToken:
@@ -245,6 +270,45 @@ class TelegramBotClient:
         )
         return self._send(method, request)
 
+    def download(self, file_path: str, *, max_bytes: int) -> bytes:
+        """GET one file from `https://api.telegram.org/file/bot<token>/<file_path>` (C61).
+
+        Same host, client and rules as every Bot API call (no new egress);
+        streamed and aborted as soon as more than `max_bytes` arrive.
+
+        Args:
+            file_path: the `file_path` of a `getFile` result.
+            max_bytes: hard cap on the body (1..`MAX_DOWNLOAD_BYTES`).
+
+        Raises:
+            ValueError: a bad `file_path` or cap (checked before any request).
+            TelegramFileTooLargeError: the body exceeded `max_bytes`.
+            TelegramError: transport failure or a non-200 status.
+        """
+        path = validate_file_path(file_path)
+        if not 0 < max_bytes <= MAX_DOWNLOAD_BYTES:
+            raise ValueError("download cap must be 1..MAX_DOWNLOAD_BYTES")
+        request = self._http.build_request(
+            "GET",
+            f"{BASE_URL}/file/bot{self._token.reveal()}/{path}",
+            timeout=httpx.Timeout(
+                connect=_CONNECT_TIMEOUT,
+                read=_DOWNLOAD_READ_TIMEOUT,
+                write=_CONNECT_TIMEOUT,
+                pool=_CONNECT_TIMEOUT,
+            ),
+        )
+        status, raw, failure = self._exchange(request, cap=max_bytes)
+        del request  # holds the token in its URL
+        if failure == "ResponseTooLarge":
+            raise TelegramFileTooLargeError("download", "file over the cap", status=status)
+        if failure is not None:
+            raise TelegramError("download", f"request failed ({failure})", status=status or None)
+        if status != 200 or not raw:
+            # The body may be Telegram's JSON error: never echoed (it is not scrubbed here).
+            raise TelegramError("download", f"HTTP {status}", status=status)
+        return raw
+
     def _send(self, method: str, request: httpx.Request) -> object:
         status, raw, failure = self._exchange(request)
         del request  # holds the token in its URL
@@ -253,8 +317,13 @@ class TelegramBotClient:
             raise TelegramError(method, f"request failed ({failure})")
         return self._result(method, status, raw)
 
-    def _exchange(self, request: httpx.Request) -> tuple[int, bytes, str | None]:
-        """Send and read at most `MAX_RESPONSE_BYTES`; (status, body, failure type name)."""
+    def _exchange(
+        self, request: httpx.Request, *, cap: int | None = None
+    ) -> tuple[int, bytes, str | None]:
+        """Send and read at most `cap` bytes; (status, body, failure type name)."""
+        # Resolved per call (not as a default) so the module cap stays the single source.
+        if cap is None:
+            cap = MAX_RESPONSE_BYTES
         try:
             response = self._http.send(request, stream=True)
         except httpx.HTTPError as exc:
@@ -267,7 +336,7 @@ class TelegramBotClient:
             body = bytearray()
             for chunk in response.iter_bytes():
                 body += chunk
-                if len(body) > MAX_RESPONSE_BYTES:
+                if len(body) > cap:
                     return response.status_code, b"", "ResponseTooLarge"
             return response.status_code, bytes(body), None
         except httpx.HTTPError as exc:

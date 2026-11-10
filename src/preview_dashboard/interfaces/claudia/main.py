@@ -10,7 +10,9 @@ hook socket directory (C59), an unusable knowledge base or (with
 halt persisted in the state dir is read at start (the host starts halted). `build_host`
 wires the screen pipeline (C48), the hook gate + control socket (C59/C60),
 the approval flow (C46/C55), KB commits (C53), voice replies (C56), the
-persona loader and the host progress pings (F-CL2).
+persona loader and the host progress pings (F-CL2) and voice/photo turns
+(C62: switches read from the vetted config; with voice on the whisper
+install is hash-checked, a failure turns voice off with one alert).
 Then three threads: the **poller** long-polls the inbox, claims each message
 (handled CAS: processed once) and runs `/stop` `/status` `/voice` at once
 (so `/stop` works while a run is busy); the **worker** runs everything
@@ -55,8 +57,17 @@ from preview_dashboard.adapters.haiku_screen import HaikuScreenRunner
 from preview_dashboard.adapters.kb_git import GitKbHistory
 from preview_dashboard.adapters.kb_store import FsKbStore
 from preview_dashboard.adapters.piper_tts import PiperTextToSpeech
+from preview_dashboard.adapters.run_media import WorkdirPhotoFiles
 from preview_dashboard.adapters.secret_scan import RegexSecretScanner
 from preview_dashboard.adapters.transcripts import JsonlTranscripts
+from preview_dashboard.adapters.whisper_sandbox import (
+    DEFAULT_WHISPER_DIR,
+    SandboxTranscriber,
+    WhisperInstall,
+    WhisperPinError,
+    prepare_scratch,
+    verify_whisper_install,
+)
 from preview_dashboard.application.claudia.approval_flow import (
     ApprovalFlow,
     DenialRecorder,
@@ -65,6 +76,7 @@ from preview_dashboard.application.claudia.approval_flow import (
 from preview_dashboard.application.claudia.audit import PeerAudit
 from preview_dashboard.application.claudia.hook_gate import HookGate
 from preview_dashboard.application.claudia.kb import KbService
+from preview_dashboard.application.claudia.media_input import MediaInput, PhotoTools
 from preview_dashboard.application.claudia.persona import PersonaLoader
 from preview_dashboard.application.claudia.pings import ProgressPings
 from preview_dashboard.application.claudia.runs import HOST_RULES_PROMPT, ClaudiaHost
@@ -75,7 +87,14 @@ from preview_dashboard.application.claudia.windows import (
     WindowTracker,
     parse_host_command,
 )
+from preview_dashboard.config import (
+    Settings,
+    config_file_explicit,
+    config_file_path,
+    verify_config_file_secure,
+)
 from preview_dashboard.domain.errors import StorageUnavailableError
+from preview_dashboard.domain.owner_media import MessageKind
 from preview_dashboard.domain.owner_messages import OwnerMessage
 from preview_dashboard.interfaces.claudia.control_socket import (
     ControlSocketError,
@@ -107,7 +126,8 @@ from preview_dashboard.interfaces.token_file import (
     TokenKind,
     TokenLoader,
 )
-from preview_dashboard.ports.claudia_host import HostAdmin, RunPreflight
+from preview_dashboard.ports.claudia_host import HostAdmin, HostAlerts, RunPreflight
+from preview_dashboard.ports.claudia_media import HostMedia
 from preview_dashboard.ports.claudia_screen import Screen, ScreenHealth
 
 POLL_WAIT_SECONDS: Final = 50
@@ -117,6 +137,11 @@ IMMEDIATE_COMMANDS: Final = frozenset({HostCommand.STOP, HostCommand.STATUS, Hos
 EXIT_REFUSED: Final = 2
 VOICES_DIR_NAME: Final = "voices"  # Piper models, root 0700 (install.sh --voice-models)
 KB_HALT_FILE: Final = "kb-halted"  # the persisted KB halt (C53, newcode-1)
+VOICE_SCRATCH_NAME: Final = "voice-tmp"  # private 0700 job dirs of the transcriber (C62)
+WHISPER_PIN_ALERT: Final = (
+    "Claudia: voice input off, whisper is not installed or failed its pin check"
+)
+MEDIA_CONFIG_ALERT: Final = "Claudia: voice and photo input off, the config could not be read"
 
 _log = logging.getLogger("preview_dashboard.claudia")
 
@@ -274,7 +299,8 @@ class HostLoop:
             if not self._admin.mark_handled(message.id):
                 continue  # someone else claimed it: processed once (C58)
             claimed += 1
-            command = parse_host_command(message.text)
+            # A caption is never a command (C61): only typed text can be `/stop` etc.
+            command = parse_host_command(message.text) if message.kind is MessageKind.TEXT else None
             if command is not None and command in IMMEDIATE_COMMANDS:
                 self._host.command(command, message.id)
             else:
@@ -338,6 +364,7 @@ class HostLoop:
             ("poller", self.poll_once),
             ("worker", self.work_once),
         ]
+        self._host.sweep_media()  # C62: photos a crashed run left behind
         if self._host.has_approvals:
             # F-CL3b: requests parked by a previous process are lost; cancel them before
             # any thread can open a new one, so they don't hold the open cap for 24 h.
@@ -365,6 +392,7 @@ def build_host(
     verified: HostSettings,
     *,
     screen: Screen | None = None,
+    media: MediaConfig | None = None,
 ) -> HostParts:
     """Load the `claudia` token, trust the admin socket, then `wire_host` (after `startup_checks`).
 
@@ -379,7 +407,7 @@ def build_host(
     verify_admin_socket(config.admin_socket)
     admin = ClaudiaAdminClient(config.admin_socket, token)
     try:
-        return wire_host(config, environ, verified, admin, screen=screen)
+        return wire_host(config, environ, verified, admin, screen=screen, media=media)
     except BaseException:
         admin.close()
         raise
@@ -420,6 +448,79 @@ def voice_composer(voices_dir: Path) -> VoiceComposer | None:
     return VoiceComposer(tts=PiperTextToSpeech(voices_dir), scanner=RegexSecretScanner())
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MediaConfig:
+    """The host's view of the voice/photo switches (C61/C62); the default is all off.
+
+    `error` = the config could not be read: both inputs stay off (fail closed).
+    """
+
+    voice: bool = False
+    photo: bool = False
+    photo_tools: PhotoTools = PhotoTools.READ_ONLY
+    whisper_dir: Path = DEFAULT_WHISPER_DIR
+    error: bool = False
+
+
+def load_media_config(load: Callable[[], Settings] | None = None) -> MediaConfig:
+    """Read the switches from the vetted config file (C16); any error -> all off, `error` set."""
+    try:
+        if load is None:
+            verify_config_file_secure(config_file_path(), missing_ok=not config_file_explicit())
+            settings = Settings()
+        else:
+            settings = load()
+        return MediaConfig(
+            voice=settings.voice_input_active,
+            photo=settings.photo_input_active,
+            photo_tools=PhotoTools(settings.claudia_photo_turn_tools),
+            whisper_dir=settings.whisper_dir,
+        )
+    except Exception as exc:
+        # Fail closed for media only: typed chat keeps working; the message may hold a value.
+        _log.error("media input off: config not loaded (%s)", type(exc).__name__)
+        return MediaConfig(error=True)
+
+
+def media_input(
+    config: HostConfig,
+    media: MediaConfig,
+    admin: HostMedia,
+    alerts: HostAlerts,
+    *,
+    verify: Callable[[Path], WhisperInstall] = verify_whisper_install,
+    python: Path | None = None,
+) -> MediaInput:
+    """Voice/photo turns for this host run (C62); never raises.
+
+    With voice on, the whisper install is hash-checked now: missing or
+    mismatched -> voice input off for this run plus one `failed` alert (no crash).
+    """
+    if media.error:
+        alerts.failed(MEDIA_CONFIG_ALERT)
+    transcriber: SandboxTranscriber | None = None
+    if media.voice:
+        try:
+            transcriber = SandboxTranscriber(
+                verify(media.whisper_dir),
+                python=python or Path(sys.executable),
+                scratch=prepare_scratch(config.state_dir / VOICE_SCRATCH_NAME),
+            )
+        except (WhisperPinError, OSError, ValueError) as exc:
+            # The error names a path only, never a hash or content.
+            _log.error("voice input off: %s", exc)
+            alerts.failed(WHISPER_PIN_ALERT)
+    return MediaInput(
+        admin=admin,
+        transcriber=transcriber,
+        # Always wired, so leftover photos are swept even with photos off now.
+        files=WorkdirPhotoFiles(config.workdir),
+        voice_enabled=media.voice,
+        photo_enabled=media.photo,
+        photo_tools=media.photo_tools,
+    )
+
+
 class RunCgroupError(RuntimeError):
     """Per-run cgroups are required but the host has no delegated cgroup (host-flow-5)."""
 
@@ -452,8 +553,11 @@ def wire_host(
     screen: Screen | None = None,
     trusted_uids: Sequence[int] = (0,),
     find_cgroup_root: Callable[[], Path | None] = delegated_cgroup_root,
+    media: MediaConfig | None = None,
 ) -> HostParts:
     """Wire every adapter into `ClaudiaHost` (composition root of the host process).
+
+    `media`: the voice/photo switches (`load_media_config`); None = both off.
 
     Raises:
         HostSettingsError: the MCP config is unsafe or not the expected shape (C51, C53).
@@ -537,6 +641,8 @@ def wire_host(
         # F-CL2: persona read through the KB at every run; host-sent progress pings.
         persona=PersonaLoader(kb, alerts),
         pings=ProgressPings(admin),
+        # C62: voice notes transcribed in the sandbox, photos framed in the work dir.
+        media=media_input(config, media or MediaConfig(), admin, alerts),
     )
     return HostParts(loop=HostLoop(admin, host, screen), admin=admin, control=control, host=host)
 
@@ -560,7 +666,7 @@ def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] | None = 
     config = parse_args(argv)
     try:
         verified = startup_checks(config, env)
-        parts = build_host(config, env, verified)
+        parts = build_host(config, env, verified, media=load_media_config())
     except _REFUSALS as exc:
         # These name a variable, file or rule only, never a value (C49, C12).
         _log.error("refusing to start: %s", exc)

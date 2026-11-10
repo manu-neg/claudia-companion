@@ -1,8 +1,9 @@
 """Ports of the admin's Claudia services: wake-ups and outbound Telegram messages (ADR 0031).
 
 `ChangeEvents` wakes long-polls (inbox, approval state) in-process;
-`ApprovalPrompts` and `ReplyOutbox` hand an approval's Approve/Deny message
-and Claudia's replies to the notification outbox (the delivery side is
+`ApprovalPrompts`, `ApprovalResolutions` and `ReplyOutbox` hand an
+approval's Approve/Deny message, its outcome edit (F-CL5) and Claudia's
+replies to the notification outbox (the delivery side is
 unit M2's). Implementations receive only values the application already
 validated and secret-scanned (C35, C46, C56).
 """
@@ -38,6 +39,22 @@ class ApprovalPrompts(Protocol):
         Raises:
             StorageUnavailableError: delivery is not available (the request
                 is then cancelled by the caller: fail closed).
+        """
+        ...
+
+
+class ApprovalResolutions(Protocol):
+    """Queues the edit of a decided request's Telegram prompt (F-CL5, C46)."""
+
+    def resolve(self, request: ApprovalRequest) -> None:
+        """Queue the fixed outcome edit (buttons removed) for a decided `request`.
+
+        Best effort: the caller has already stored the decision and must
+        never let this undo or block it.
+
+        Raises:
+            ValidationError: `request` is not decided (PENDING / TAPPED).
+            StorageUnavailableError: the outbox can't be written right now.
         """
         ...
 

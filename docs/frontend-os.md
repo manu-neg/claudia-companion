@@ -1,6 +1,6 @@
 # Frontend: OS environments (`static/os/`)
 
-**TL;DR:** The dashboard's look is an **OS**: one folder `static/os/<name>/` (tokens, chrome CSS, a shell script, a background set, optional `fx/`). The functional app is OS-neutral. `os-boot.js` sets `html[data-os="<name>"]` from `pdash.os` before any CSS loads; every OS is linked, every OS rule is scoped to `:root[data-os="<name>"]`, every OS script no-ops unless its name is active. Two OSes ship: Platinum (default) and Aero (unit A1). Why: ADR 0028. This page is the complete recipe for adding one; `tests/unit/test_os_contract.py` enforces it for every registered OS.
+**TL;DR:** The dashboard's look is an **OS**: one folder `static/os/<name>/` (tokens, chrome CSS, a shell script, a background set, optional `fx/`). The functional app is OS-neutral. `os-boot.js` sets `html[data-os="<name>"]` from `pdash.os` before any CSS loads; every OS is linked, every OS rule is scoped to `:root[data-os="<name>"]`, every OS script no-ops unless its name is active. Three OSes ship: Platinum (default), Aero (unit A1) and Neumorph (units N1/N2). Why: ADR 0028. This page is the complete recipe for adding one; `tests/unit/test_os_contract.py` enforces it for every registered OS.
 
 ## Layers
 
@@ -139,3 +139,100 @@ Reduced motion: every animation/transition selector is set to `none` in `fx.css`
 Aero icons: rules for sprite-shape classes (`.aero-doc-*`, `.aero-c-*`, `.aero-ic-*`) are deliberately unscoped, because `<use>` clones shapes into a shadow tree where a `:root[data-os]` ancestor selector never matches (shapes would render black); `test_aero_icon_css.py` enforces it.
 
 `tests/unit/test_aero_os.py` checks the token pairs, the motion system and the rest of the Aero-specific rules.
+
+## Neumorph
+
+Soft UI (neumorphism, owner request 2026-11-10, backlog §16): every part is moulded from **one** porcelain surface `#e4e9f1` (desktop, windows, wells, keys, menus, notes share it; depth comes only from light/shade pairs). Light only. Font preloads: `nunito-400.woff2`, `nunito-800.woff2`.
+
+- `theme.css`: ink `#26304a`, muted `#566179`; one accent, **iris** `#5146d8` (hover `#4338c4`, soft `#d6dbf6`) for the primary action, current section, selection text, focus ring, checked state and LEDs (picked over blue so it never reads as Aero, over green as Platinum, and over coral/orange so it can't be confused with danger); danger `#b8253a`; `--color-warning-soft` is the surface itself (notes carry an amber LED instead of a yellow fill); Nunito 400/600/800 (rounded terminals match the pillowy shapes); radii 12/14/18px (+ private 16–28px); `--motion-duration: 180ms`, `--focus-ring-width: 3px`.
+- **Shadow recipe** (private `--neu-*` tokens in `chrome.css`): one light source top-left; raised = full white `rgb(255 255 255 / 1)` up-left + shade `rgb(163 177 198 / .75)` down-right, blur ≈ 2× offset, plus a **lit rim** (inset 1px white up-left, inset 1px shade down-right) so the up-left edge reads as a highlight, not only the down-right drop (N2 polish 1); sunken = the pair `inset`. Every key state is a **four-layer list** (outer shade, outer light, inner shade, inner light; unused layers are zero-size) so raised ↔ pressed interpolates instead of jumping. Three elevation steps: controls 4px (`--bevel-raised`; xs 2px for small chips), cards/windows 10px (`--shadow-raised`), overlays 20px (`--shadow-overlay`); wells 5px / 8px inset. Faint 145° gradients: convex keys `#edf1f7 → #dde3ec`, concave reversed, slabs `#e8ecf3 → #e0e6ee`. No hard borders, no black rules; separators are engraved grooves (shade line + light line).
+- `chrome.css`: the shell bar is a floating raised slab (inset 12/16px from the edges on wider screens) with the **app knob** (a round raised knob with a lit iris LED) and the name; Feed / Trash (moved into the nav slot by `shell.js`), Knowledge map and both pickers are pill keys (current/open = pressed in + accent text; count badges in sunken capsules); the clock is a sunken readout. Windows are 28px raised slabs; the title bar is part of the slab (title in ink 800); the real close control is a round raised knob that presses in (44px hit area). Lists: `.inset` is a sunken well, rows lie flat in it, hover/focus lifts the row into a raised capsule with the title in iris, press sinks it; list heads are small engraved caps; `.row-more` a small round key; status text engraved; the decorative resize grip is hidden. Info window: the preview `.screen` a deep well with the media rounded inside; `.fields` and `.group` embossed panels; files small raised cards (the selected one pressed in, name in iris); "Opens first" a sunken chip. Controls: `.button` convex key → concave on `:active` (shadow flips, 1px down); `.button-primary` an iris key with a soft iris glow; `.button-danger` red key; `.button-danger-quiet` surface key with red text; `.select` a soft key with a round sunken knob holding a CSS chevron (the sprite arrow hides); inputs (`.kmap-search`, code input) sunken pills; `[aria-pressed=true]` stays pressed in + iris. Knowledge map: the N3 showpiece, see **Knowledge map** below. Overlays (context menu, pickers, dialog over a blurred surface veil, balloon hints with lit/shaded tails, notes with an amber LED, toast pill with an iris LED, full-screen close key) use the top elevation step. `::selection` iris-soft, thin scrollbars.
+- Backgrounds (relief on the one surface, gradients only): **Porcelain** (default, a faint convex sheen), **Dunes** (two pairs of long lit/shaded ridges), **Pillows** (a 48px grid of small cushions, lit up-left and shaded down-right), **Rings** (grooves cut in concentric circles around a centre high on the right), **Orb** (one large raised disc of the surface). Alphas stay ≤ .75 light / .32 shade, so no text ever sits on more than a ±3% lightness change.
+- `shell.js`: swaps the sprite art (`icons.js`, `safe("sprite", …)`) and moves `nav.desk-icons` into `[data-slot="nav"]`; adds no other DOM (knob, LEDs and relief are CSS).
+- `fx/`: the clock always (stops while the tab is hidden); with motion allowed also ghosts, badge pop, splash, screensaver and the knowledge-map effects `fx/kmap.js` (see Motion and Knowledge map).
+- Phones (< 37.5rem): one row of 44px keys — knob, Feed, Trash, Knowledge map (icon only; current = pressed + iris rim), Background (a small relief disc; the label stays its accessible name), OS; the clock and app name hide. The Version label aligns with the popup's first line when the switcher wraps.
+- **N2 polish** (backlog §16.2): rows lift by cross-fading two pre-rendered layers (`::before` raised capsule, `::after` pressed) — opacity only, no repaint of the row; Map/List is a segmented control (sunken pill track, the active key raised with iris text); count badges are small sunken wells; the list well is deeper at its up-left inner edge; "Opens first" is an embossed chip; menu items (context menu, pickers) rest flat and press in as a capsule with iris text on hover or `:focus-visible`; the ring shows only for keyboard focus and follows the capsule (2px offset), plain `:focus` from opening the menu with the mouse stays flat; the info window's Back is a quiet pill key with an iris chevron on its own row under the title; knowledge-map labels are semibold with a thin surface-coloured halo painted under the glyphs (`paint-order: stroke fill`, 0.26em; the pearl filter moved to the dots, so labels stay crisp and evenly spaced); the sort caret and pin are drawn in the icon set; Orb is a real dome (lit sheen up-left, surface face, darker rim, glow and cast offset).
+
+### Icons (`icons.js`)
+
+One hand, one light: every sprite symbol is redrawn as **moulded porcelain** on a 32-unit grid. Document kinds sit on a **pebble** (26-unit rounded square, r 8) extruded by a helper (`extrude`: a shade copy +0.8 down-right, a light copy up-left, the face, three faint concentric sheens); the mark on it is **embossed** (`emboss`: a light lift up-left, a shade drop down-right, the mark in ink `#34405c` or iris). Objects (folder, trash, caution, pin, app knob, kmap pearls, bundle stack) are themselves pebbles; folder and bins carry an embossed ink edge so they hold their silhouette at list size (folder: iris tab, ink flap edge and handle; bins: ink rim and ribs). Colour language: ink = the structure, iris = the one meaningful accent (bar, sun, play, check, arrow, folder tab), muted strokes only as secondary detail, amber only for caution, the three map pearls in the map palette. Boxes are sized for the tile they show (the tile fills 26 of 32 units): list rows 40px on wider screens (≈ 32px tile, negative block margin keeps the row height), file rows 28px (≈ 23px tile), info head and alerts 88px (≈ 72px tile), pin and sort caret 14px; a two-step CSS `drop-shadow` gives the cast and glow. Shapes carry **bare, unscoped** classes `.neumorph-ic-*` coloured by `--neu-ic-*` tokens: `<use>` clones into a shadow tree where `:root[data-os]` never matches, and the tokens inherit from the `<use>` element (same lesson as Aero; `test_neumorph_icons.py`). Marks that carry meaning reach ≥ 3:1 on the face (ink 8.47, iris 5.35, amber 3.84); muted detail (2.93) never stands alone.
+
+### Motion (`chrome.css` tokens, `fx/fx.css`, `fx/*.js`)
+
+Physical, quiet, one light: things **rise out of** and **sink into** the surface (scale .965 → 1 with a 10px lift, shadow growing with it), never slide or spin. Exits are faster than entrances; press is faster than release; release settles with one small overshoot.
+
+| Token | Value | Used by |
+|---|---|---|
+| `--neu-dur-press` / `-release` | 70 / 260ms | every key: press in, then release with `--neu-ease-settle` (overshoot ≤ 1.45) |
+| `--neu-dur-menu-in` / `-out` | 200 / 120ms | context menu (rises toward its key), pickers, balloon hints |
+| `--neu-dur-window-in` / `-out` | 340 / 170ms | window rise on every route, dialog + veil, expanded preview |
+| `--neu-dur-toast-in` / `-out` | 280 / 180ms | toast pill |
+| `--neu-dur-pop` / `-splash` / `-breathe` | 380 / 560ms / 9s | badge pop, splash, screensaver |
+| `--neu-ease-out` / `-in` / `-press` / `-settle` / `-breathe` | cubic-béziers | entrances / exits / press / release / ambient |
+
+- **Keys** (shell keys, buttons, close knob, `…`, file actions, select, map entry buttons, map pearls): rest → hover (−1px, larger shadow) → press (+1px, inset) → release, all on `box-shadow`/`transform` only.
+- **Entrances** are CSS animations on the app's own state (`.main > .window`, `.ctx-menu`, `.shell-menu:not([hidden])`, `.dialog[open]` + `::backdrop`, `.toast.is-visible`, `.stage.is-expanded`). **Exits** of `hidden` surfaces use `transition … display allow-discrete` (works through the app's `[hidden]{display:none !important}`); the toast keeps `visibility` for its fade.
+- **Ghosts** (`fx/ghost.js`): surfaces the app removes at once (the old window on a route change, a closed context menu or dialog, the full-screen veil) leave an empty `aria-hidden` slab of the same box that sinks away. Ghosts only follow the app: no navigation, no prevented events, no item text (no clone).
+- **Badge pop** (`fx/badge.js`), **splash** (`fx/splash.js`: the knob rises, its LED lights, "Previews" surfaces; any input or 1.7s dismisses it, the dismissing input is swallowed; then the bar and window rise in turn), **screensaver** (`fx/screensaver.js`: a breathing dome in three grooved rings; removed while the tab is hidden, `?fxIdleMs` ≥ 1000).
+- **Reduced motion**: `fx.js` starts only the clock; every `--neu-dur-*` is 0ms and every animated/transitioned selector is listed with `none` (contract test). Verified: no splash, 0 running animations, instant navigation, no ghosts.
+
+### Knowledge map (N3, backlog §16.5)
+
+One physical model: a moulded **basin** in which porcelain **pearls** sit in **sockets**, joined by **channels** cut into the floor. Iris light is the only accent; it marks what is related to the note in focus.
+
+| Hook / state | Treatment |
+|---|---|
+| `.kmap-map` | Deep basin (multi-layer inset, `--neu-kmap-basin`) with an embossed dimple relief (two radial gradients, 32px grid). Keyboard focus never draws a box: `.kmap-svg` loses its outline and the basin rim lights iris (`--neu-kmap-basin-ring`). |
+| `.kmap-dot` / `.kmap-ring` / `.kmap-shine` | Pearl = category core (`--kmap-c0..7`) under a 2.6px porcelain dome stroke + two drop-shadows; ring = its socket (surface fill, lit lip); shine = specular highlight. All three scale with `--neu-kmap-k` (ring × `--neu-kmap-socket-k`) via `transform-box: view-box` (the node `g` keeps its own `translate`). |
+| `is-recent` / `is-hub` | Recent: iris socket rim (breathes with fx). Hubs are larger by the layout radius only. |
+| hover / `:active` / `is-selected` | Rise k 1.42 / sink k 1.08 (press timing) / seated k 1.4, socket 1.22 with iris halo + 2.6px iris stroke, label iris 800. |
+| `has-focus` + `is-near` | Neighbours rise (k 1.32, staggered by `--neu-kmap-nd`); unrelated pearls dim to .34 and drop their filter (flush with the floor). |
+| `is-filtered` | Fade to .2, no shadow; matches rise (k 1.3) with an iris-soft socket. |
+| `.kmap-edge` | Engraved channel (2px `--neu-kmap-groove`, round caps); one lit-lip `drop-shadow` on the whole edge layer (`.kmap-svg g:has(> .kmap-edge)`), never per line. Tag links: a dotted engraving (`0.1 6`, 2.6px). Near: iris. |
+| `.kmap-label` | Clean plates: surface-coloured stroke halo (`paint-order`), ink 600. |
+| `.kmap-index` | A well; categories with a domed gem swatch and a count well; entries are raised soft keys in a grid with a category pip, selected = pressed + iris rim/text; "Changed this week" a chip with an iris LED. Phones get the same list. |
+| `.kmap-panel` | Raised reading slab; head over an engraved groove; tags convex chips with an iris `#`; links iris over a groove (no default blue), missing = dotted muted groove; quote/code sunken wells; backlinks pill keys. Hint: an empty pearl. |
+| `.kmap-message` | Empty / loading / error: an empty socket above engraved text; "Try again" a soft key. Loading: the socket breathes. |
+| `.kmap-approvals` | Control panel slab; title LED (`.group-title::before`): unlit socket = nothing waiting, **amber** = waiting or "can't be checked", **iris** = code entry open, **iris breathing** = a decision in flight (`button:disabled`). Each request is a sunken bay; text full size, never clipped; ID in a well chip; Approve… a convex iris key, Deny… a quiet key with danger text; the code form a raised plate whose input shows six engraved cells (`--neu-kmap-cell`, background gradient only); status a pill (`:empty` stays hidden). |
+
+Category cores on the surface (≥ 3:1, `test_neumorph_kmap.py`): iris `#5a4fd9` 4.85, teal `#1b8379` 3.77, amber `#a8690c` 3.67, rose `#c0446a` 4.03, sky `#2f74c0` 3.93, sage `#4a8650` 3.58, plum `#8a4bb0` 4.64, slate `#5f6c88` 4.32. Each state also differs in size, ring or opacity, so none relies on hue alone.
+
+**Interaction** (`fx/fx.css`, `fx/kmap.js`; tokens in `chrome.css`):
+
+| Trigger | Motion | Tokens |
+|---|---|---|
+| First open / back to Map | Pearls rise in a wave from the centre (`--neu-kmap-d` = distance × 520ms), sockets open, labels fade in after; link channels draw themselves from the nearer end (`stroke-dashoffset`, `--neu-kmap-len`/`-from`), tag channels fade | `kmap-rise` 560ms, `kmap-draw` 620ms, settle ease |
+| Hover (mouse) / press / release | Pearl rises / sinks / settles with overshoot | `release`, `press` |
+| Focus (hover or select) | Iris light flows outward along its channels (link: draw, tag: trickle); neighbours rise nearest-first (45ms steps); the rest dims | `kmap-flow` 600ms (sine), `--neu-kmap-nd` |
+| Select | The pearl seats (dip and settle), iris ring; a ripple of light and shade spreads through the basin from it (one `aria-hidden` div, removed after) | `kmap-seat` 420ms, `kmap-ripple` 900ms |
+| Pointer (fine pointer only) | A soft light follows the pointer across the basin; pearls within 190px lean their shine toward it (`--neu-kmap-lx/ly/glint`, written only when the change > .03) | rAF, passive `pointermove` |
+| Recent notes | Socket rim breathes (`steps(24)`, so idle costs ~24 paints per cycle) | `breathe` / 2 |
+| Map → List, note open | Category groups and keys rise in turn; the slab lifts and its parts rise in reading order | `kmap-page` 300ms |
+| Search / category filter | Non-matches fade flush, matches rise (transitions) | `release` |
+| Approve | Key press; the code plate rises out of the bay; the Approve key stays pressed in while checking, LED breathes | `kmap-page`, `breathe` |
+
+Only `transform`, `opacity`, `stroke-dashoffset` and custom properties animate; no animated filters, no per-frame `box-shadow` on large surfaces. Paused while the tab is hidden (`html.neumorph-kmap-paused`, the pointer loop stops on leave). Reduced motion: `fx/kmap.js` never starts, the six `--neu-dur-kmap-*` tokens are 0ms, every animated selector is `none`, the pointer light is `display:none`; every state is still distinguishable (size, ring, iris).
+
+**Performance at 150 notes** (~340 channels; headless Chromium, software raster, so absolute numbers are pessimistic): idle 0 long frames; filter p50 16.7ms; select p95 67ms; pointer sweep p50 16.7ms, most of the long frames come from the app's own hover restyle (present with `fx/` stubbed too); the opening wave is the heaviest moment (≈ 1.4s, p50 33ms).
+
+**`fx/kmap.js` isolation**: decoration only. It reads the map's geometry (`.kmap-viewport`, `.kmap-nodes`/`.kmap-edges` children, `getScreenCTM`) and writes only custom properties (`style.setProperty`), its own `neumorph-kmap-*` classes (opening on the svg, paused on `html`) and two empty `aria-hidden` divs (light, ripple). No item text, no network, no storage, no HTML sinks, no prevented or stopped events, passive listeners only; it never touches the approvals card (C6, C23, C46). With `fx/` deleted the map is complete and static.
+
+### Contrast (WCAG; token pairs and every key-gradient stop, `test_neumorph_os.py`)
+
+| Pair | Ratio |
+|---|---|
+| Ink on the surface / on the darkest key stop | 10.74 / 9.86 |
+| Muted on the surface / lightest / darkest key stop | 5.09 / 5.48 / 4.68 |
+| Iris text on the surface / darkest key stop | 5.35 / 4.92 |
+| White on the iris key (light / dark stop, flat) | 5.16 / 7.23 / 6.53 |
+| White on the red key (light / dark stop) | 4.90 / 7.19 |
+| Danger text on the surface / darkest key stop | 5.12 / 4.70 |
+| Warning text on the surface | 6.14 |
+| Ink on iris-soft (`::selection`) | 9.55 |
+| Focus ring (iris) on the surface | 5.35 (≥ 3 needed) |
+| Ink / muted / iris on the Orb rim (`#d9e0ea`, darkest background stop) | 9.85 / 4.67 / 4.91 |
+| Icon marks on the pebble face: ink / iris / amber (non-text, ≥ 3) | 8.47 / 5.35 / 3.84 |
+
+Every interactive control reads without its shadow: ink or iris text/icons, and selected, current and checked states always add iris text, an iris rim or a lit LED.
+
+`tests/unit/test_neumorph_os.py` checks registration, the one-surface rule, private-token names, contrast, that every hook of the table above is styled, the phone bar, motion and the fx start order, and the Nunito provenance; `tests/unit/test_neumorph_icons.py` runs `icons.js` under Node and checks the icon art (every symbol, unscoped classes, token colours, mark contrast) and the motion rules (reduced-motion zeroing, exit < entrance, press < release, entrances/exits present, ghost and screensaver constraints); `tests/unit/test_neumorph_kmap.py` checks the knowledge map (core contrast, every map/approvals hook styled, no stage outline, the approvals card never hidden/clipped/animated away, keyframe properties, one lip filter, `fx/kmap.js` decoration-only rules and reduced-motion coverage).

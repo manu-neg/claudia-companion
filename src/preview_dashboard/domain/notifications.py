@@ -6,7 +6,9 @@ dashboard link (`DashboardLinks`) and the origin channels pin it to
 (one SEND or RESOLVE per channel, with retry/backoff) and the DTOs the
 notifier receives (`DeliveryPayload`, `PendingTask`). An approval prompt
 (C46) is a notification with an `approval_id`: its payload carries that id
-and no buttons; the channel adds the fixed Approve/Deny pair itself. Pure
+and no buttons; the channel adds the fixed Approve/Deny pair itself. Once
+the request is decided, a RESOLVE edits that message to one fixed text per
+outcome (`APPROVAL_OUTCOME_TEXTS`, F-CL5) and removes the buttons. Pure
 stdlib; every value validates on construction, so the notifier re-checks
 what the admin sends.
 """
@@ -15,14 +17,15 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import NewType
+from types import MappingProxyType
+from typing import Final, NewType
 from urllib.parse import urlsplit
 
-from preview_dashboard.domain.approvals import ApprovalId, parse_approval_id
+from preview_dashboard.domain.approvals import ApprovalId, ApprovalState, parse_approval_id
 from preview_dashboard.domain.errors import InvalidStateError, ValidationError
 from preview_dashboard.domain.models import ItemId, ensure_utc, is_ulid, parse_item_id
 from preview_dashboard.domain.questions import (
@@ -70,6 +73,66 @@ _LINK_RE = re.compile(
 )
 # Message text is several sanitized lines joined by "\n" (`events.compose_text`).
 _MESSAGE_KEEP = frozenset({"\n"})
+
+# F-CL5: what a decided approval prompt is edited to. Fixed texts only: no action
+# text, target or id, so the edit can't show anything the prompt didn't (C46).
+# CONSUMED is the same approval, used once by the host.
+APPROVAL_OUTCOME_TEXTS: Final[Mapping[ApprovalState, str]] = MappingProxyType(
+    {
+        ApprovalState.APPROVED: "Approval request: approved with your code.",
+        ApprovalState.CONSUMED: "Approval request: approved with your code.",
+        ApprovalState.DENIED: "Approval request: denied. Nothing was run.",
+        ApprovalState.CANCELLED: "Approval request: cancelled. Nothing was approved.",
+        ApprovalState.EXPIRED: "Approval request: expired. Nothing was approved.",
+    }
+)
+# The outbox column only knows question states (no schema change, F-CL5): an
+# approval RESOLVE stores one of these as a placeholder. It is never shown: the
+# admin re-reads the request's real state when it hands the RESOLVE out.
+_APPROVAL_STORED_FINAL_STATES: Final[Mapping[ApprovalState, QuestionState]] = MappingProxyType(
+    {
+        ApprovalState.APPROVED: QuestionState.ANSWERED,
+        ApprovalState.CONSUMED: QuestionState.ANSWERED,
+        ApprovalState.DENIED: QuestionState.ANSWERED,
+        ApprovalState.CANCELLED: QuestionState.CANCELLED,
+        ApprovalState.EXPIRED: QuestionState.EXPIRED,
+    }
+)
+
+
+def approval_outcome(raw: object) -> ApprovalState:
+    """Validate a decided approval state (one with a fixed edit text, F-CL5).
+
+    Raises:
+        ValidationError: not an `ApprovalState`, or still undecided (PENDING / TAPPED).
+    """
+    if not isinstance(raw, str):
+        raise ValidationError("invalid approval outcome")
+    try:
+        state = ApprovalState(raw)
+    except ValueError:
+        raise ValidationError("invalid approval outcome") from None
+    if state not in APPROVAL_OUTCOME_TEXTS:
+        raise ValidationError("an undecided approval has no outcome")
+    return state
+
+
+def approval_outcome_content(state: ApprovalState) -> MessageContent:
+    """The fixed edit of a decided approval prompt: outcome text only, no buttons or link.
+
+    Raises:
+        ValidationError: `state` is undecided.
+    """
+    return MessageContent(text=APPROVAL_OUTCOME_TEXTS[approval_outcome(state)])
+
+
+def approval_stored_final_state(state: ApprovalState) -> QuestionState:
+    """The outbox `final_state` placeholder of an approval RESOLVE (never shown).
+
+    Raises:
+        ValidationError: `state` is undecided.
+    """
+    return _APPROVAL_STORED_FINAL_STATES[approval_outcome(state)]
 
 
 def parse_notification_id(raw: object) -> NotificationId:
@@ -475,6 +538,10 @@ class DeliveryPayload:
     An approval prompt (`approval_id` set, C46) is short-form text only: no
     `question_id`, `final_state`, buttons or link, so the only buttons it
     ever shows are the channel's fixed Approve/Deny pair for that id.
+    `approval_outcome` (F-CL5) marks the RESOLVE of a decided prompt: it
+    needs an `approval_id` and its text must be exactly that outcome's
+    fixed text (`APPROVAL_OUTCOME_TEXTS`); the channel then draws no
+    buttons at all. `final_state` stays a question-only field.
     `voice_id` (C56) is the reply's notification id under which a voice
     note may wait in the admin's voice store; only a long-form reply
     carries it, and the text is always sent whether or not audio exists.
@@ -485,6 +552,7 @@ class DeliveryPayload:
     final_state: QuestionState | None = None
     approval_id: ApprovalId | None = None
     voice_id: NotificationId | None = None
+    approval_outcome: ApprovalState | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.content, MessageContent):
@@ -495,6 +563,14 @@ class DeliveryPayload:
                 raise ValidationError("only a long-form reply can carry a voice id")
         if self.question_id is not None:
             parse_question_id(self.question_id)
+        if self.approval_outcome is not None:
+            outcome = approval_outcome(self.approval_outcome)
+            object.__setattr__(self, "approval_outcome", outcome)
+            if self.approval_id is None:
+                raise ValidationError("an approval outcome needs an approval_id")
+            # Fixed text only: nothing from the outbox row can reach the edit.
+            if self.content.text != APPROVAL_OUTCOME_TEXTS[outcome]:
+                raise ValidationError("an approval outcome shows only its fixed text")
         if self.approval_id is not None:
             parse_approval_id(self.approval_id)
             content = self.content
@@ -523,11 +599,14 @@ class PendingTask:
     """A due delivery as handed to the notifier (`NotificationOutbox.pending`).
 
     `message_ref` is set for RESOLVE only: the id of the message its SEND
-    posted, which the channel edits.
+    posted, which the channel edits. A question RESOLVE carries
+    `final_state`; an approval prompt's RESOLVE carries `approval_outcome`
+    instead (F-CL5).
 
     Raises (on construction):
         ValidationError: bad id/channel; RESOLVE without `message_ref` or
-            `final_state`; SEND with either.
+            without its outcome (`final_state`, or `approval_outcome` for an
+            approval); SEND with any of them.
     """
 
     id: TaskId
@@ -547,7 +626,12 @@ class PendingTask:
             raise ValidationError("payload must be a DeliveryPayload")
         if self.message_ref is not None:
             validate_message_ref(self.message_ref)
-        parts = (self.message_ref is not None, self.payload.final_state is not None)
+        payload = self.payload
+        # An approval's outcome stands in for `final_state` (which it may never carry).
+        outcome = (
+            payload.approval_outcome if payload.approval_id is not None else payload.final_state
+        )
+        parts = (self.message_ref is not None, outcome is not None)
         expected = (True, True) if self.action is DeliveryAction.RESOLVE else (False, False)
         if parts != expected:
             raise ValidationError("a RESOLVE needs message_ref and final_state; a SEND neither")

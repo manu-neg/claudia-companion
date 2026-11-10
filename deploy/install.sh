@@ -46,6 +46,11 @@ NOTIFY_TOK_GROUP="pdash-notifytok"
 CLAUDIA_TOK_GROUP="pdash-claudiatok"
 TOTP_GROUP="pdash-totp"
 KB_GROUP="pdash-kb"
+# F-CL6 (ADR 0043, C46): pdash-viewtok = viewer.token (the viewer presents it
+# for dashboard Approve/Deny, the admin verifies it). Like pdash-kb it exists
+# on EVERY host (the static viewer/admin units name it); pdash-admin is its
+# only member, the viewer holds it via SupplementaryGroups=.
+VIEWER_TOK_GROUP="pdash-viewtok"
 TOKEN_FILE_MODE=0640
 CONFIG_FILE_MODE=0644
 
@@ -73,6 +78,7 @@ TELEGRAM_TOKEN_FILE=""
 CLAUDIA_FLAG=0               # 0 = Claudia not installed (default, unchanged behavior)
 CLAUDE_BIN="/root/.local/bin/claude"
 VOICE_MODELS=""              # empty = no voice replies (no extra, no models)
+WHISPER_FLAG=0               # 0 = no whisper.cpp build/install (default, nothing happens)
 
 usage() {
     cat <<'EOF'
@@ -114,7 +120,19 @@ Options:
                           pinned; re-checked on every run) and add the
                           claudia-voice extra. Without it no voice is
                           installed (nothing is downloaded)
-  -h, --help              Show this help
+  --whisper               Voice-note input: download whisper.cpp v1.9.5 + the
+                          ggml-base model, check both against deploy/claudia/
+                          whisper.sha256 BEFORE use, build CPU-only with pinned
+                          cmake/ninja wheels (hash-pinned in deploy/claudia/
+                          whisper-build-requirements.txt, run via --uv-bin) and
+                          install to /opt/claudia-whisper. Also installs the
+                          claudia-voice extra (soundfile, numpy) for decoding.
+                          Needs --claudia and curl. Re-runs skip when the
+                          installed hashes match. Never edits config.toml:
+                          voice and photo input are on by default and work once
+                          this build is in place. Without it, voice notes get a
+                          fixed "voice is off" reply
+  -h, --help             Show this help
 EOF
 }
 
@@ -159,6 +177,10 @@ while [[ $# -gt 0 ]]; do
         --voice-models)
             VOICE_MODELS="${2:?--voice-models needs a value}"
             shift 2
+            ;;
+        --whisper)
+            WHISPER_FLAG=1
+            shift
             ;;
         -h | --help)
             usage
@@ -231,6 +253,7 @@ OPT_DIR="${PREFIX}/opt/preview-dashboard"
 ETC_DIR="${PREFIX}/etc/preview-dashboard"
 VAR_DIR="${PREFIX}/var/lib/preview-dashboard"
 SYSTEMD_DIR="${PREFIX}/etc/systemd/system"
+VIEWER_DROPIN_DIR="$SYSTEMD_DIR/preview-dashboard-viewer.service.d"
 OUTBOX_DIR="${PREFIX}/root/outbox"
 CONFIG_FILE="$ETC_DIR/config.toml"
 TOKEN_FILE="$ETC_DIR/admin.token"
@@ -250,6 +273,7 @@ HOST_STATE_DIR="${PREFIX}/var/lib/claudia-host"
 VOICES_DIR="$HOST_STATE_DIR/voices"
 VOICES_STAGING="$HOST_STATE_DIR/voices.incoming"  # root 0700: copies hashed here
 CLAUDIA_TOKEN_FILE="$ETC_DIR/claudia.token"
+VIEWER_TOKEN_FILE="$ETC_DIR/viewer.token"
 TOTP_SECRET_FILE="$ETC_DIR/totp.secret"
 CLAUDIA_SETTINGS_DEST="$ETC_DIR/claudia-settings.json"
 CLAUDIA_MCP_DEST="$ETC_DIR/claudia-mcp.json"
@@ -261,6 +285,18 @@ CLAUDIA_MCP_TEMPLATE="$SCRIPT_DIR/claudia/mcp.json.in"
 VOICE_PINS="$SCRIPT_DIR/claudia/voices.sha256"
 VOICE_FILES=(es_MX-claude-high.onnx es_MX-claude-high.onnx.json
     en_US-amy-medium.onnx en_US-amy-medium.onnx.json)
+# Voice-note transcription (F-CL4, C62, ADR 0042). Fixed path: the host reads
+# the same one. The two input pins live in the repo; the binary's hash is
+# written into the installed copy after the build.
+WHISPER_PINS="$SCRIPT_DIR/claudia/whisper.sha256"
+WHISPER_DIR="${PREFIX}/opt/claudia-whisper"
+WHISPER_TARBALL_URL="https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.9.5.tar.gz"
+WHISPER_MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"
+# Build tools (cmake 3.31.6, ninja 1.11.1.4) come from PyPI through uv (no apt,
+# no system package) as hash-pinned wheels. `uv run --with-requirements` does
+# not check the --hash lines, so they go into a fresh venv with
+# `uv pip install --require-hashes --no-deps --only-binary :all:` instead.
+WHISPER_BUILD_REQS="$SCRIPT_DIR/claudia/whisper-build-requirements.txt"
 # The C59 hook command (console script from unit M5a); the host settings
 # file names exactly this path.
 HOOK_BIN="$VENV_BIN/preview-dashboard-claudia-hook"
@@ -332,6 +368,108 @@ verify_voices() {
         return 0
     fi
     env -C "$dir" sha256sum --check --strict --quiet - <<<"$pins"
+}
+
+# The hash pinned for role $2 (tarball|model|binary) in file $1; prints
+# nothing unless exactly one well-formed line names that role.
+whisper_pin() {
+    local hash
+    hash="$(sed -n "s/^\([0-9a-f]\{64\}\)  $2\$/\1/p" "$1")"
+    if [[ "$hash" =~ ^[0-9a-f]{64}$ ]]; then
+        echo "$hash"
+    fi
+}
+
+file_sha256() { sha256sum -- "$1" | cut -d' ' -f1; }
+
+# 0 iff file $1 hashes to $2. Always called BEFORE the file is extracted or used.
+verify_sha256() {
+    [[ "$(file_sha256 "$1")" == "$2" ]]
+}
+
+# 0 iff /opt/claudia-whisper already holds this exact pinned build: the record
+# names the pinned tarball + model, and both installed files still hash to it.
+whisper_up_to_date() {
+    local rec="$WHISPER_DIR/whisper.sha256" tar_pin="$1" model_pin="$2" rec_bin rec_tar
+    [[ -f "$rec" && -x "$WHISPER_DIR/bin/whisper-cli" && -f "$WHISPER_DIR/models/ggml-base.bin" ]] || return 1
+    rec_tar="$(sed -n 's/^# tarball \([0-9a-f]\{64\}\)$/\1/p' "$rec")"
+    rec_bin="$(whisper_pin "$rec" binary)"
+    [[ "$rec_tar" == "$tar_pin" && "$(whisper_pin "$rec" model)" == "$model_pin" && -n "$rec_bin" ]] || return 1
+    verify_sha256 "$WHISPER_DIR/models/ggml-base.bin" "$model_pin" || return 1
+    verify_sha256 "$WHISPER_DIR/bin/whisper-cli" "$rec_bin"
+}
+
+# Download, verify (before any use), build CPU-only and install whisper.cpp.
+# $1=tarball pin, $2=model pin. Everything untrusted stays in one fresh temp
+# dir; the build runs from an EMPTY cwd with absolute paths, so nothing in the
+# downloaded tree is picked up by an interpreter.
+install_whisper() {
+    local tar_pin="$1" model_pin="$2" work nproc_n bin_hash
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        echo "+ (skip when $WHISPER_DIR/whisper.sha256 already matches the pins and the installed files)"
+        echo "+ curl -fsSL --proto =https --proto-redir =https -o <fresh temp dir>/whisper.tar.gz $WHISPER_TARBALL_URL"
+        echo "+ curl -fsSL --proto =https --proto-redir =https -o <fresh temp dir>/ggml-base.bin $WHISPER_MODEL_URL"
+        echo "+ sha256sum check of both downloads against $WHISPER_PINS (before extracting or using them)"
+        echo "+ tar -xzf <temp dir>/whisper.tar.gz --strip-components=1 -C <temp dir>/src"
+        echo "+ $UV_BIN venv <temp dir>/tools"
+        echo "+ $UV_BIN pip install --python <temp dir>/tools/bin/python --require-hashes --no-deps --only-binary :all: -r $WHISPER_BUILD_REQS"
+        echo "+ <temp dir>/tools/bin/cmake -S <temp dir>/src -B <temp dir>/build -G Ninja -DCMAKE_MAKE_PROGRAM=<temp dir>/tools/bin/ninja -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF"
+        echo "+ <temp dir>/tools/bin/cmake --build <temp dir>/build --target whisper-cli"
+        echo "+ install -m 0755 -o root -g root <temp dir>/build/bin/whisper-cli $WHISPER_DIR/bin/whisper-cli"
+        echo "+ install -m 0644 -o root -g root <temp dir>/ggml-base.bin $WHISPER_DIR/models/ggml-base.bin"
+        echo "+ write $WHISPER_DIR/whisper.sha256 (mode 0644, owner root:root; binary + model hashes)"
+        return 0
+    fi
+    if whisper_up_to_date "$tar_pin" "$model_pin"; then
+        echo "  $WHISPER_DIR already holds the pinned build; leaving it in place"
+        return 0
+    fi
+    if ! command -v curl >/dev/null 2>&1; then
+        echo "error: --whisper needs curl (not installed); install it first (owner action)" >&2
+        exit 1
+    fi
+    # Global so the EXIT trap still sees it after this function returns/exits.
+    WHISPER_WORK="$(mktemp -d)"
+    work="$WHISPER_WORK"
+    trap 'rm -rf "$WHISPER_WORK"' EXIT
+    mkdir -p -- "$work/src" "$work/cwd"
+    curl -fsSL --proto '=https' --proto-redir '=https' -o "$work/whisper.tar.gz" "$WHISPER_TARBALL_URL"
+    curl -fsSL --proto '=https' --proto-redir '=https' -o "$work/ggml-base.bin" "$WHISPER_MODEL_URL"
+    # Pins first: an unexpected byte is never extracted, built or installed.
+    if ! verify_sha256 "$work/whisper.tar.gz" "$tar_pin"; then
+        echo "error: the whisper.cpp tarball does not match its pinned SHA-256 ($WHISPER_PINS)" >&2
+        exit 1
+    fi
+    if ! verify_sha256 "$work/ggml-base.bin" "$model_pin"; then
+        echo "error: the whisper model does not match its pinned SHA-256 ($WHISPER_PINS)" >&2
+        exit 1
+    fi
+    tar -xzf "$work/whisper.tar.gz" --strip-components=1 -C "$work/src"
+    nproc_n="$(nproc)"
+    # The wheels must match their pinned hashes (a mismatch or an unlisted
+    # package fails the install); no sdist is ever built.
+    env -C "$work/cwd" "$UV_BIN" venv "$work/tools"
+    env -C "$work/cwd" "$UV_BIN" pip install --python "$work/tools/bin/python" \
+        --require-hashes --no-deps --only-binary :all: -r "$WHISPER_BUILD_REQS"
+    env -C "$work/cwd" "$work/tools/bin/cmake" -S "$work/src" -B "$work/build" -G Ninja \
+        -DCMAKE_MAKE_PROGRAM="$work/tools/bin/ninja" \
+        -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DBUILD_SHARED_LIBS=OFF \
+        -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF
+    env -C "$work/cwd" "$work/tools/bin/cmake" --build "$work/build" --target whisper-cli -j "$nproc_n"
+    if [[ ! -x "$work/build/bin/whisper-cli" ]]; then
+        echo "error: the whisper.cpp build produced no bin/whisper-cli" >&2
+        exit 1
+    fi
+    # The record goes in LAST: an interrupted install never looks complete.
+    run rm -f -- "$WHISPER_DIR/whisper.sha256"
+    run install -d -m 0755 -o root -g root "$WHISPER_DIR" "$WHISPER_DIR/bin" "$WHISPER_DIR/models"
+    run install -m 0755 -o root -g root "$work/build/bin/whisper-cli" "$WHISPER_DIR/bin/whisper-cli"
+    run install -m 0644 -o root -g root "$work/ggml-base.bin" "$WHISPER_DIR/models/ggml-base.bin"
+    bin_hash="$(file_sha256 "$WHISPER_DIR/bin/whisper-cli")"
+    printf '# installed by install.sh --whisper; the host checks these (C62)\n# tarball %s\n%s  binary\n%s  model\n' \
+        "$tar_pin" "$bin_hash" "$model_pin" | write_file "$WHISPER_DIR/whisper.sha256" 0644 root:root
+    rm -rf "$work"
+    trap - EXIT
 }
 
 # Every member of group $1, one per line: its member list plus every user
@@ -441,11 +579,31 @@ if [[ -n "$VOICE_MODELS" && "$CLAUDIA" -eq 0 ]]; then
     echo "error: --voice-models needs --claudia" >&2
     exit 2
 fi
+if [[ "$WHISPER_FLAG" -eq 1 && "$CLAUDIA" -eq 0 ]]; then
+    echo "error: --whisper needs --claudia" >&2
+    exit 2
+fi
+if [[ "$WHISPER_FLAG" -eq 1 ]]; then
+    # Fail closed before anything changes: both inputs must be pinned.
+    WHISPER_TAR_PIN="$(whisper_pin "$WHISPER_PINS" tarball)"
+    WHISPER_MODEL_PIN="$(whisper_pin "$WHISPER_PINS" model)"
+    if [[ -z "$WHISPER_TAR_PIN" || -z "$WHISPER_MODEL_PIN" ]]; then
+        echo "error: the tarball and model are not both pinned in $WHISPER_PINS" >&2
+        exit 2
+    fi
+fi
 # Voice stays installed once its models are in place (else `uv sync` would
 # drop the extra on a plain re-run).
 VOICE=0
 if [[ "$CLAUDIA" -eq 1 ]] && [[ -n "$VOICE_MODELS" || -d "$VOICES_DIR" ]]; then
     VOICE=1
+fi
+# Voice-note input decodes with soundfile/numpy (the claudia-voice extra), so
+# --whisper (or an installed whisper build) keeps the extra too. This does not
+# imply Piper voices: VOICE (model checks) stays as it is.
+VOICE_EXTRA="$VOICE"
+if [[ "$CLAUDIA" -eq 1 ]] && [[ "$WHISPER_FLAG" -eq 1 || -d "$WHISPER_DIR" ]]; then
+    VOICE_EXTRA=1
 fi
 if [[ -n "$VOICE_MODELS" ]]; then
     # Fail closed: every voice file must be pinned in the repo before any
@@ -470,6 +628,8 @@ fi
 # deploy-5: vet reused groups before anything changes. pdash-kb has no
 # members at all (only the viewer unit holds it, SupplementaryGroups=).
 refuse_unexpected_members "$KB_GROUP"
+# An extra member of pdash-viewtok would read viewer.token (C46).
+refuse_unexpected_members "$VIEWER_TOK_GROUP" "$ADMIN_USER"
 if [[ "$CLAUDIA" -eq 1 ]]; then
     refuse_unexpected_members "$CLAUDIA_TOK_GROUP" "$ADMIN_USER"
     refuse_unexpected_members "$TOTP_GROUP" "$ADMIN_USER"
@@ -503,6 +663,8 @@ done
 # No members: only the viewer unit holds it (SupplementaryGroups=), and it
 # must exist for that unit to start at all (constants above).
 ensure_group "$KB_GROUP"
+# Same for pdash-viewtok: both static units name it (F-CL6).
+ensure_group "$VIEWER_TOK_GROUP"
 
 # --- 1b. notifier user + shared token group (notifier installed, step 0;
 # always idempotent: existing accounts are only reported) --------------------
@@ -549,6 +711,8 @@ if [[ "$CLAUDIA" -eq 1 ]]; then
     ensure_group "$TOTP_GROUP"
     ensure_member "$CLAUDIA_TOK_GROUP" "$ADMIN_USER"
     ensure_member "$TOTP_GROUP" "$ADMIN_USER"
+    # The admin verifies viewer.token (dashboard decisions, F-CL6/C46).
+    ensure_member "$VIEWER_TOK_GROUP" "$ADMIN_USER"
 fi
 
 # --- 2. resolve pdash-admin's uid for the viewer unit's --trusted-owner-uid,
@@ -648,7 +812,7 @@ fi
 log "uv sync --frozen --no-dev"
 # Voice (M10): Piper is GPL-3.0, a runtime extra only, never vendored.
 _sync_extra=()
-if [[ "$VOICE" -eq 1 ]]; then
+if [[ "$VOICE_EXTRA" -eq 1 ]]; then
     _sync_extra=(--extra claudia-voice)
 fi
 run env -C "$OPT_DIR" "$UV_BIN" sync --frozen --no-dev "${_sync_extra[@]}"
@@ -802,6 +966,20 @@ if [[ "$CLAUDIA" -eq 1 ]]; then
         fi
     fi
 
+    log "viewer token"
+    if [[ -e "$VIEWER_TOKEN_FILE" ]]; then
+        echo "  $VIEWER_TOKEN_FILE already exists; leaving it in place"
+    else
+        # root:pdash-viewtok 0640 (C46/C12): the viewer presents it for
+        # dashboard Approve/Deny (unit SupplementaryGroups=), the admin
+        # verifies it (member). Only valid on /v1/viewer/*; never in env/argv.
+        run "$PDASH_BIN" gen-token --out "$VIEWER_TOKEN_FILE" --group "$VIEWER_TOK_GROUP"
+        if [[ "$DRY_RUN" -eq 0 ]]; then
+            chmod "$TOKEN_FILE_MODE" "$VIEWER_TOKEN_FILE"
+            chown root:"$VIEWER_TOK_GROUP" "$VIEWER_TOKEN_FILE"
+        fi
+    fi
+
     log "TOTP secret"
     # Never created here (C47): setup is interactive, on the owner's terminal.
     if [[ -e "$TOTP_SECRET_FILE" ]]; then
@@ -875,6 +1053,13 @@ elif [[ -e "$CLAUDIA_ADMIN_ENV" ]]; then
     run rm -f "$CLAUDIA_ADMIN_ENV"
 fi
 
+# --- 7d. whisper.cpp for voice notes (opt-in --whisper; F-CL4, C62, ADR 0042) ---
+# Never touches config.toml: the owner switches claudia_voice_input_enabled on.
+if [[ "$WHISPER_FLAG" -eq 1 ]]; then
+    log "whisper.cpp + model (pinned SHA-256, $WHISPER_PINS)"
+    install_whisper "$WHISPER_TAR_PIN" "$WHISPER_MODEL_PIN"
+fi
+
 # --- 8. validate config, then create/migrate the schema -------------------------
 # --token-group: check-config runs as root here, whose own egid (0) does
 # not match the token file's group ($SERVICE_GROUP) by default. H2 (S-B):
@@ -890,6 +1075,8 @@ fi
 if [[ "$CLAUDIA" -eq 1 ]]; then
     # check-config loads claudia.token too when claudia_enabled (C45).
     _check_extra+=(--token-group "claudia=$CLAUDIA_TOK_GROUP")
+    # ...and viewer.token while dashboard decisions are active (F-CL6, C46).
+    _check_extra+=(--token-group "viewer=$VIEWER_TOK_GROUP")
 fi
 run env PDASH_CONFIG="$CONFIG_FILE" "$PDASH_BIN" check-config --token-group "admin=$SERVICE_GROUP" "${_check_extra[@]}"
 
@@ -914,6 +1101,14 @@ if [[ "$CLAUDIA" -eq 1 ]]; then
     for unit in claudia-host.service claudia-gardener.service claudia-gardener.timer; do
         run install -m 0644 "$SCRIPT_DIR/systemd/$unit" "$SYSTEMD_DIR/$unit"
     done
+    # F-CL6 (ADR 0043): only Claudia hosts drop the viewer's L1 mask on
+    # /run/preview-dashboard, via a drop-in; the static unit keeps it.
+    run install -d -m 0755 "$VIEWER_DROPIN_DIR"
+    run install -m 0644 "$SCRIPT_DIR/systemd/preview-dashboard-viewer.service.d/claudia-decisions.conf" \
+        "$VIEWER_DROPIN_DIR/claudia-decisions.conf"
+elif [[ -e "$VIEWER_DROPIN_DIR/claudia-decisions.conf" ]]; then
+    # Left over after `uninstall.sh` removed Claudia: restore the L1 mask.
+    run rm -f "$VIEWER_DROPIN_DIR/claudia-decisions.conf"
 fi
 run systemctl daemon-reload
 

@@ -5,8 +5,10 @@ forwards its three arguments, plus the per-run nonce the host put in the
 run's env (`CLAUDIA_RUN_NONCE`, F-CL3b), over the host's root 0600 control
 socket (the one the C59 hook uses); the host's approval flow checks them
 against the run in progress and opens the request through the admin exactly
-like the reply-line path. This module only carries the call: it never creates
-a request itself and holds no admin token. Stdlib only.
+like the reply-line path. `cancel_approval` (F-CL5) travels the same way
+with the same nonce and closes one of her own open requests. This module
+only carries the calls: it never creates or cancels a request itself and
+holds no admin token. Stdlib only.
 """
 
 from __future__ import annotations
@@ -82,6 +84,23 @@ class HostApprovals:
         reply = self._exchange((line + "\n").encode("utf-8"))
         return read_answer(reply)
 
+    def cancel(self, request_id: str) -> str:
+        """Cancel one of her own open requests (F-CL5); return the host's "cancelled" text.
+
+        Raises:
+            ApprovalToolError: the host refused (its fixed text), is down, or
+                answered with anything but the two known shapes.
+        """
+        nonce = self.environ.get(RUN_NONCE_ENV, "")
+        if not nonce:
+            raise ApprovalToolError(NO_RUN_TEXT)
+        args = {"request_id": request_id, "nonce": nonce}
+        if any(len(value) > MAX_ARG_CHARS for value in args.values()):
+            raise ApprovalToolError("refused: an argument is too long")
+        line = json.dumps({"v": PROTOCOL_VERSION, "cancel_approval": args}, separators=(",", ":"))
+        reply = self._exchange((line + "\n").encode("utf-8"))
+        return read_answer(reply, ok_result="cancelled")
+
     def _exchange(self, payload: bytes) -> bytes:
         self._check_socket()
         deadline = time.monotonic() + self.timeout
@@ -118,8 +137,8 @@ class HostApprovals:
             raise ApprovalToolError(HOST_DOWN_TEXT)
 
 
-def read_answer(reply: bytes) -> str:
-    """The pending text of a host answer line.
+def read_answer(reply: bytes, *, ok_result: str = "pending") -> str:
+    """The success text of a host answer line (`ok_result`: `pending` or `cancelled`).
 
     Raises:
         ApprovalToolError: `refused` (its text), or anything malformed.
@@ -138,7 +157,7 @@ def read_answer(reply: bytes) -> str:
         raise ApprovalToolError(BAD_REPLY_TEXT)
     if set(data) == {"result", "text"} and data["result"] == "refused":
         raise ApprovalToolError(text)
-    if set(data) == {"result", "id", "text"} and data["result"] == "pending":
+    if set(data) == {"result", "id", "text"} and data["result"] == ok_result:
         return text
     raise ApprovalToolError(BAD_REPLY_TEXT)
 

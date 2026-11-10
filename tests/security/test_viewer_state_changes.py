@@ -102,8 +102,13 @@ def _post_routes(env: ViewerEnv) -> set[str]:
     return found
 
 
+# Covered by its own matrix in tests/security/test_dashboard_decisions.py (F-CL6).
+_DECISION_ROUTE = "/api/claudia/approvals/{approval_id}/decision"
+
+
 def test_every_post_route_is_covered() -> None:
-    assert _post_routes(make_env()) == {f"/api/items/{{item_id}}/{a}" for a in ACTIONS}
+    expected = {f"/api/items/{{item_id}}/{a}" for a in ACTIONS} | {_DECISION_ROUTE}
+    assert _post_routes(make_env()) == expected
 
 
 @pytest.mark.parametrize("action", ACTIONS)

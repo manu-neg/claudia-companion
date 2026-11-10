@@ -14,7 +14,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request(method, path, { etag = null, signal } = {}) {
+async function request(method, path, { etag = null, signal, body = null } = {}) {
   // Only our own API paths; never a URL taken from data.
   if (typeof path !== "string" || !path.startsWith("/api/")) throw new Error("bad API path");
   const headers = { Accept: "application/json" };
@@ -36,7 +36,8 @@ async function request(method, path, { etag = null, signal } = {}) {
     // Exact values: anything else (e.g. "; charset=utf-8") is a 403 (C4).
     headers["Content-Type"] = "application/json";
     headers["X-PDash-CSRF"] = "1";
-    init.body = "{}";
+    // A plain object only (approval decisions); always in the body, never in the URL.
+    init.body = body && typeof body === "object" ? JSON.stringify(body) : "{}";
   }
   const response = await fetch(path, init);
   if (response.status === 304) return { status: 304, etag, data: null };
@@ -58,7 +59,7 @@ export function apiGet(path, options) {
   return request("GET", path, options);
 }
 
-/** POST an empty JSON body to `path` (trash/restore). */
+/** POST to `path`: an empty JSON body (trash/restore), or `options.body` as JSON. */
 export function apiPost(path, options) {
   return request("POST", path, options);
 }

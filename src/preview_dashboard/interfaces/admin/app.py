@@ -1,7 +1,7 @@
 """Builds the admin ASGI app: FastAPI routes inside a fixed security middleware stack.
 
 Order (outermost first): request id → access log → catch-all 500 → peer
-uid policy → bearer token (admin, notifier or claudia, scoped per route family) →
+uid policy → bearer token (admin, notifier, claudia or viewer, scoped per route family) →
 FastAPI (no docs/OpenAPI, no debug, no slash redirects). Authentication runs
 before routing, so without a token even 404s are indistinguishable from
 401s (docs/security.md C12, C19, C26, C33, C34).
@@ -22,6 +22,7 @@ from preview_dashboard.interfaces.admin import (
     folders_api,
     notifier_api,
     questions_api,
+    viewer_api,
 )
 from preview_dashboard.interfaces.admin.api import router
 from preview_dashboard.interfaces.admin.auth import (
@@ -60,6 +61,8 @@ def build_admin_app(
     form_limits: PublishFormLimits | None = None,
     claudia_token: bytes | None = None,
     claudia_peer_uids: Collection[int] | None = None,
+    viewer_token: bytes | None = None,
+    viewer_peer_uids: Collection[int] | None = None,
 ) -> ASGIApp:
     """Build the admin API app around an admin core.
 
@@ -78,6 +81,9 @@ def build_admin_app(
         claudia_token: the Claudia host's token, valid only on `/v1/claudia/*`
             (None: those routes accept no token at all; C45).
         claudia_peer_uids: peer uids allowed on `/v1/claudia/*` (the host's).
+        viewer_token: the viewer's token, valid only on `/v1/viewer/*` (the
+            dashboard Approve/Deny route, F-CL6; None: no token is accepted there).
+        viewer_peer_uids: peer uids allowed on `/v1/viewer/*` (the viewer's).
 
     Raises:
         ValueError: a token is too short or too low-variety, or two tokens
@@ -105,17 +111,20 @@ def build_admin_app(
     inner.include_router(questions_api.router)
     inner.include_router(notifier_api.router)
     inner.include_router(claudia_api.router)
+    inner.include_router(viewer_api.router)
     app: ASGIApp = BearerAuthMiddleware(
         inner,
         verifier=TokenVerifier(token),
         notifier_verifier=None if notifier_token is None else TokenVerifier(notifier_token),
         claudia_verifier=None if claudia_token is None else TokenVerifier(claudia_token),
+        viewer_verifier=None if viewer_token is None else TokenVerifier(viewer_token),
     )
     app = PeerPolicyMiddleware(
         app,
         allowed_uids=allowed_peer_uids,
         notifier_uids=notifier_peer_uids,
         claudia_uids=claudia_peer_uids,
+        viewer_uids=viewer_peer_uids,
     )
     app = CatchAllMiddleware(app)
     app = AccessLogMiddleware(app)

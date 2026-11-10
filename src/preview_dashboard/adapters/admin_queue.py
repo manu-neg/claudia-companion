@@ -2,7 +2,8 @@
 
 Talks only to the `/notifier/*` routes with the scoped notifier token
 (C33), in the JSON format of `wire/notifier.py` (tasks, answers) and
-`wire/notifier_messages.py` (owner messages, approval taps, codes). The token lives
+`wire/notifier_messages.py` (owner messages, approval taps, codes) and
+`wire/notifier_media.py` (owner voice notes / photos, C61). The token lives
 only in the client's default headers (never logged or repr'd, C36); proxies
 and env are ignored; responses are size-bounded and re-validated by the
 domain types before the notifier acts on them.
@@ -23,6 +24,11 @@ from preview_dashboard.domain.notifications import PendingTask, TaskId
 from preview_dashboard.domain.questions import AnswerResult
 from preview_dashboard.wire import notifier as wire
 from preview_dashboard.wire import notifier_messages as wm
+from preview_dashboard.wire.notifier_media import (
+    MEDIA_PATH,
+    MediaSubmission,
+    media_request_to_json,
+)
 
 _BASE_URL: Final = "http://admin.local"
 # Tasks are small (<= 20 x a 300-char message): anything bigger is refused.
@@ -169,6 +175,19 @@ class AdminDeliveryQueue:
             return wm.parse_message_result(reply)
         except ValidationError:
             raise AdminQueueError("admin API messages: malformed response") from None
+
+    def submit_media(self, submission: MediaSubmission) -> wm.MessageResult:
+        """`POST /notifier/media`: store one owner voice note / photo (idempotent, C61).
+
+        Raises:
+            AdminQueueError: transport error, non-200 (`status` set), or a
+                malformed verdict (never containing caption or bytes).
+        """
+        reply = self._post(MEDIA_PATH, media_request_to_json(submission), "media")
+        try:
+            return wm.parse_message_result(reply)
+        except ValidationError:
+            raise AdminQueueError("admin API media: malformed response") from None
 
     def submit_approval_tap(self, submission: wm.ApprovalTapSubmission) -> wm.TapResult:
         """`POST /notifier/approvals`: record one Approve/Deny tap; returns the verdict.

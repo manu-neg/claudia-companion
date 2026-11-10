@@ -8,7 +8,9 @@ domain constructor, so a tampered row fails with `ValidationError`. The
 batch reads (`pending`, `list_expirable`) isolate such a row instead of
 failing the whole call: tasks are marked FAILED, questions skipped.
 An approval prompt's text is never taken from this (viewer-writable) store:
-`pending` rebuilds it from the admin-only request (C46, storage-totp-1).
+`pending` rebuilds it from the admin-only request (C46, storage-totp-1), and
+the edit of a decided prompt (F-CL5) shows the fixed text of the request's
+stored state.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ from __future__ import annotations
 import builtins
 import logging
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from enum import StrEnum
 
@@ -52,6 +54,9 @@ from preview_dashboard.domain.notifications import (
     NotificationId,
     PendingTask,
     TaskId,
+    approval_outcome,
+    approval_outcome_content,
+    parse_notification_id,
     validate_message_ref,
 )
 from preview_dashboard.domain.query import created_us_to_datetime
@@ -114,6 +119,12 @@ _SELECT_NOTIFICATION_FOR_QUESTION_SQL = (
 _NOTIFICATION_QUESTION_SQL = "SELECT question_id FROM notifications WHERE id = ?"
 # The admin queues exactly one prompt notification per request; more is forgery.
 _COUNT_APPROVAL_PROMPTS_SQL = "SELECT COUNT(*) FROM notifications WHERE approval_id = ?"
+_SELECT_APPROVAL_PROMPTS_SQL = "SELECT id FROM notifications WHERE approval_id = ?"
+# F-CL5: the prompt's SENDs that could still be (or were) posted with a message id.
+_SELECT_EDITABLE_SENDS_SQL = (
+    "SELECT channel FROM delivery_tasks WHERE notification_id = ? AND action = 'send' "
+    "AND (state = 'pending' OR (state = 'done' AND message_ref IS NOT NULL)) ORDER BY channel"
+)
 # Cascades to the notifications' tasks and their buttons.
 _DELETE_NOTIFICATIONS_SQL = "DELETE FROM notifications WHERE created_us < ?"
 _INSERT_TASK_SQL = (
@@ -192,19 +203,30 @@ def _live_request(
         _HoldPromptError: the Claudia database can't be read right now (the
             prompt is neither sent nor settled).
     """
+    request = _stored_request(approvals, approval_id)
+    if request is None or request.state is not ApprovalState.PENDING or request.is_expired(at):
+        return None
+    return request
+
+
+def _stored_request(
+    approvals: ApprovalStore | None, approval_id: ApprovalId
+) -> ApprovalRequest | None:
+    """The request as stored in the admin-only database; None if unknown, tampered or unwired.
+
+    Raises:
+        _HoldPromptError: the Claudia database can't be read right now.
+    """
     if approvals is None:
         return None
     try:
-        request = approvals.get(approval_id)
+        return approvals.get(approval_id)
     except (NotFoundError, ValidationError):
         return None
     except (StorageUnavailableError, DatabaseSetupError, sqlite3.Error) as exc:
         # Type only: never let a storage error stall every other alert.
         _log.warning("approval lookup for a prompt failed: %s", type(exc).__name__)
         raise _HoldPromptError from None
-    if request.state is not ApprovalState.PENDING or request.is_expired(at):
-        return None
-    return request
 
 
 def _log_id(raw: object) -> str:
@@ -646,12 +668,14 @@ class SqliteNotificationOutbox:
         resolved question's SEND. Its text is rebuilt from the request's
         stored action text (`approval` event), never read from the task
         row: the viewer can write this database, the request lives in the
-        admin-only one (C46, S-C1 S1).
+        admin-only one (C46, S-C1 S1). A prompt's RESOLVE (F-CL5) goes out
+        with the fixed text of the request's stored, decided state (never
+        the row's text or `final_state`); an unknown request drops it.
 
         Raises:
             ValidationError: the row (or a joined value) fails re-validation,
-                or an approval prompt is forged: not a SEND, or a second
-                prompt notification for the same request.
+                or an approval task is forged: a RESOLVE while the request is
+                still undecided, or a second prompt notification for it.
         """
         task = _load_task(conn, row[:13])
         question_id, send_state, send_ref, question_state = row[13], row[14], row[15], row[16]
@@ -666,22 +690,35 @@ class SqliteNotificationOutbox:
             settled.append(task.done(None))  # stale: the question is already resolved
             return
         approval_id = None if raw_approval_id is None else parse_approval_id(raw_approval_id)
+        outcome: ApprovalState | None = None
         if approval_id is not None:
-            self._check_single_prompt(conn, task, approval_id)
+            self._check_single_prompt(conn, approval_id)
             try:
-                request = _live_request(self._approvals, approval_id, at)
+                if task.action is DeliveryAction.SEND:
+                    request = _live_request(self._approvals, approval_id, at)
+                else:
+                    request = _stored_request(self._approvals, approval_id)
             except _HoldPromptError:
-                return  # Claudia DB unreadable: hold the prompt, never send it blind
+                return  # Claudia DB unreadable: hold the task, never send it blind
             if request is None:
-                # Buttons only for a PENDING, unexpired request (C46); a gone row is stale too.
-                settled.append(task.done(None))
+                if task.action is DeliveryAction.SEND:
+                    # Buttons only for a PENDING, unexpired request (C46); a gone row is stale.
+                    settled.append(task.done(None))
+                else:
+                    settled.append(task.dropped())  # no request: nothing true to show
                 return
-            content = self._approval_event.render(
-                RenderContext(title=APPROVAL_PROMPT_TITLE, body=request.action_text)
-            )
+            if task.action is DeliveryAction.SEND:
+                content = self._approval_event.render(
+                    RenderContext(title=APPROVAL_PROMPT_TITLE, body=request.action_text)
+                )
+            else:
+                # F-CL5: the admin queues an edit only once the request is decided, so
+                # one for an undecided request is forged (raises: marked FAILED).
+                outcome = approval_outcome(request.state)
+                content = approval_outcome_content(outcome)
             if content != task.content:
                 _log.warning(
-                    "approval prompt task %s differs from its request; sending the stored text",
+                    "approval task %s differs from its request; sending the stored state",
                     _log_id(task.id),
                 )
         if task.action is DeliveryAction.RESOLVE:
@@ -700,7 +737,9 @@ class SqliteNotificationOutbox:
                 payload=DeliveryPayload(
                     content=content,
                     question_id=None if question_id is None else QuestionId(question_id),
-                    final_state=task.final_state,
+                    # An approval's edit carries its outcome, never a question state.
+                    final_state=None if approval_id is not None else task.final_state,
+                    approval_outcome=outcome,
                     approval_id=approval_id,
                     # A long-form SEND is a reply: its audio (if any) waits under this id.
                     voice_id=(
@@ -714,22 +753,57 @@ class SqliteNotificationOutbox:
         )
 
     @staticmethod
-    def _check_single_prompt(
-        conn: sqlite3.Connection, task: DeliveryTask, approval_id: ApprovalId
-    ) -> None:
-        """Refuse a forged prompt: the admin queues one notification of SENDs per request.
+    def _check_single_prompt(conn: sqlite3.Connection, approval_id: ApprovalId) -> None:
+        """Refuse a forged prompt: the admin queues one prompt notification per request.
 
-        A second notification (or any RESOLVE) for the same request id can
-        only come from a writer other than the admin: all of them fail closed.
+        A second notification for the same request id can only come from a
+        writer other than the admin: every task of every one fails closed.
 
         Raises:
-            ValidationError: not a SEND, or more than one prompt notification.
+            ValidationError: more than one prompt notification.
         """
-        if task.action is not DeliveryAction.SEND:
-            raise ValidationError("an approval prompt is only ever a SEND")
         (count,) = conn.execute(_COUNT_APPROVAL_PROMPTS_SQL, (approval_id,)).fetchone()
         if count != 1:
             raise ValidationError("more than one prompt notification for one approval request")
+
+    def add_approval_resolves(
+        self,
+        approval_id: ApprovalId,
+        *,
+        content: MessageContent,
+        final_state: QuestionState,
+        now: datetime,
+        new_task_id: Callable[[], TaskId],
+    ) -> int:
+        """See `ApprovalResolveOutbox.add_approval_resolves` (one `BEGIN IMMEDIATE`)."""
+        parse_approval_id(approval_id)
+        if content.buttons or content.link is not None:
+            raise ValidationError("an approval outcome has no buttons or link")
+        conn = self._conn_factory()
+        try:
+            with _writing(conn):
+                prompts = conn.execute(_SELECT_APPROVAL_PROMPTS_SQL, (approval_id,)).fetchall()
+                if len(prompts) != 1:
+                    return 0  # never prompted (or forged twins: `pending` fails them closed)
+                notification_id = parse_notification_id(prompts[0][0])
+                channels = [
+                    row[0] for row in conn.execute(_SELECT_EDITABLE_SENDS_SQL, (notification_id,))
+                ]
+                tasks = [
+                    DeliveryTask.new_resolve(
+                        id=new_task_id(),
+                        notification_id=notification_id,
+                        channel=channel,
+                        content=content,
+                        final_state=final_state,
+                        now=now,
+                    )
+                    for channel in channels
+                ]
+                _insert_tasks(conn, tasks)
+            return len(tasks)
+        finally:
+            conn.close()
 
     def get_task(self, task_id: TaskId) -> DeliveryTask:
         """See `NotificationOutbox.get_task`."""

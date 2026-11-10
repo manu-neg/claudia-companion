@@ -10,7 +10,10 @@ closed) -> RFC 6238 match in steps -1..+1, never a step at or before the
 last accepted one (no replay) -> persist the new state -> approve.
 5 wrong codes in 15 min lock every code out for 15 min (persisted); each
 wrong code raises one "Wrong authenticator code" alert (shared C37 budget).
-Codes are never logged, stored or returned. Pure core: ports only.
+Codes are never logged, stored or returned. A code typed into the
+dashboard panel (F-CL6, `submit_dashboard_code`) names its request and
+shares the same lock, replay mark, counters, lockout and alert.
+Pure core: ports only.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from enum import StrEnum
 from typing import Final
 
 from preview_dashboard.application.approvals import ApprovalService
+from preview_dashboard.domain.approval_decisions import DecisionResult
 from preview_dashboard.domain.errors import DomainError, StorageUnavailableError
 from preview_dashboard.domain.totp import StepUpState, matching_step, parse_code, time_step
 from preview_dashboard.ports.clock import Clock
@@ -147,6 +151,62 @@ class StepUpService:
             return CodeResult.REFUSED
         logger.info("step-up: code accepted, request %s approved", tapped[0].id)
         return CodeResult.ACCEPTED
+
+    def submit_dashboard_code(self, approval_id: str, code: str) -> DecisionResult:
+        """Verify a code typed into the dashboard panel; approve that one request (F-CL6).
+
+        Same lock, secret, replay mark, wrong-code counters, lockout and alert
+        as Telegram codes (one shared attempt budget). Differences: the
+        request is named (no "exactly one TAPPED" rule; it may be PENDING or
+        TAPPED), and there is no Telegram message to de-duplicate. A request
+        that can't be decided is reported without checking the code, so
+        nothing about the code is learned and nothing is counted.
+
+        Raises:
+            ValidationError: `code` is not exactly six ASCII digits.
+        """
+        parse_code(code)
+        with self._lock:
+            locked = False
+            try:
+                with self._state.exclusive():
+                    locked = True
+                    return self._submit_named(approval_id, code)
+            except StorageUnavailableError:
+                if locked:
+                    raise
+                logger.warning("step-up refused: state lock unavailable")
+                return DecisionResult.REFUSED
+
+    def _submit_named(self, approval_id: str, code: str) -> DecisionResult:
+        now = int(self._clock.now().timestamp())
+        try:
+            state = self._state.load()
+        except StorageUnavailableError:
+            logger.warning("step-up refused: state unavailable")
+            return DecisionResult.REFUSED
+        if state.is_locked(now):
+            logger.warning("step-up refused: locked out (dashboard)")
+            return DecisionResult.LOCKED
+        verdict, request = self._approvals.open_for_decision(approval_id)
+        if verdict is not None or request is None:
+            return verdict or DecisionResult.UNKNOWN
+        try:
+            secret = self._secret.load()
+        except StorageUnavailableError:
+            return DecisionResult.REFUSED
+        step = matching_step(secret, code, time_step(now), after_step=state.last_step)
+        del secret
+        if step is None:
+            wrong = self._wrong(state, now, reason="dashboard code mismatch or replay")
+            if wrong is CodeResult.LOCKED:
+                return DecisionResult.LOCKED
+            return DecisionResult.WRONG_CODE
+        # Burn the step before approving: a crash after this can't allow a replay.
+        burned = self._save_only(state.with_success(step), CodeResult.ACCEPTED)
+        if burned is not CodeResult.ACCEPTED:
+            return DecisionResult.REFUSED
+        return self._approvals.approve_with_verified_code(request)
 
     def _save_only(self, state: StepUpState, result: CodeResult) -> CodeResult:
         try:

@@ -288,6 +288,53 @@ class TestOtherCommands:
         assert run("serve-admin")[0] == cli.EXIT_USAGE
         assert "admin token file" in capsys.readouterr().err
 
+    @pytest.mark.parametrize(
+        ("claudia_enabled", "decisions"), [(False, True), (True, False), (False, False)]
+    )
+    def test_serve_admin_admits_no_viewer_uid_unless_decisions_are_active(
+        self, env, monkeypatch, claudia_enabled, decisions
+    ):
+        """F-CL6: the static admin unit always passes --viewer-peer-uid, but without
+        Claudia or with dashboard decisions off the family stays empty (nobody)."""
+        from preview_dashboard.interfaces.admin import app as admin_app
+        from preview_dashboard.interfaces.admin import server as admin_server
+
+        write_token(env / "secrets" / "admin.token")
+        settings = cli.load_settings().model_copy(
+            update={"claudia_enabled": claudia_enabled, "claudia_dashboard_decisions": decisions}
+        )
+        assert settings.dashboard_decisions_active is False
+
+        class _Loader:
+            def __init__(self, policy: object) -> None: ...
+
+            def load(self, kind: object, path: object) -> bytes:
+                return b"A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1v" + str(kind).encode()
+
+        seen: dict[str, object] = {}
+
+        def fake_build(core: object, **kwargs: object) -> object:
+            seen.update(kwargs)
+            return object()
+
+        monkeypatch.setattr(cli, "load_settings", lambda: settings)
+        monkeypatch.setattr(cli, "TokenLoader", _Loader)
+        monkeypatch.setattr(cli, "totp_groups", lambda *a, **k: frozenset({7}))
+        monkeypatch.setattr(admin_app, "build_admin_app", fake_build)
+        monkeypatch.setattr(admin_server, "serve", lambda *a, **k: None)
+        code, _ = run(
+            "serve-admin",
+            "--allowed-peer-uid",
+            "1000",
+            "--claudia-peer-uid",
+            "3000",
+            "--viewer-peer-uid",
+            "4000",
+        )
+        assert code == 0
+        assert seen["viewer_token"] is None
+        assert tuple(seen["viewer_peer_uids"]) == ()  # type: ignore[arg-type]
+
     def test_serve_viewer_without_viewer_server_module(self, env, monkeypatch, capsys):
         monkeypatch.setattr(cli, "VIEWER_SERVER_MODULE", "preview_dashboard.no_such_module")
         assert run("serve-viewer")[0] == cli.EXIT_FAILED
@@ -298,13 +345,19 @@ class TestOtherCommands:
         import types
 
         seen: list[object] = []
+
+        def serve(core: object, *, decider: object = None) -> None:
+            seen.append(core)
+            seen.append(decider)
+
         module = types.ModuleType("fake_viewer_server")
-        module.serve = seen.append  # type: ignore[attr-defined]
+        module.serve = serve  # type: ignore[attr-defined]
         monkeypatch.setitem(sys.modules, "fake_viewer_server", module)
         monkeypatch.setattr(cli, "VIEWER_SERVER_MODULE", "fake_viewer_server")
         assert run("migrate")[0] == 0  # the viewer never creates the schema itself
         assert run("serve-viewer", "--trusted-owner-uid", str(os.geteuid()))[0] == 0
         assert type(seen[0]).__name__ == "ViewerCore"
+        assert seen[1] is None  # dashboard decisions are off by default
 
     def test_rejects_bad_uid(self):
         with pytest.raises(SystemExit):

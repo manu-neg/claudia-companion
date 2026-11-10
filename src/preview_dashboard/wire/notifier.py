@@ -26,6 +26,7 @@ from preview_dashboard.domain.notifications import (
     MessageContent,
     PendingTask,
     TaskId,
+    approval_outcome,
     parse_notification_id,
     parse_task_id,
     validate_message_ref,
@@ -56,8 +57,17 @@ _PAYLOAD_REQUIRED: Final = frozenset({"text", "buttons"})
 # `long_form` (C56): only `reply`/`voice` payloads carry it, as `true`.
 # `approval_id` (C46): only approval prompts carry it, as a ULID string.
 # `voice_id` (C56): a reply's notification id; its audio may wait under it.
+# `approval_outcome` (F-CL5): only a decided prompt's RESOLVE carries it.
 _PAYLOAD_OPTIONAL: Final = frozenset(
-    {"link", "question_id", "final_state", "long_form", "approval_id", "voice_id"}
+    {
+        "link",
+        "question_id",
+        "final_state",
+        "long_form",
+        "approval_id",
+        "voice_id",
+        "approval_outcome",
+    }
 )
 _TASK_REQUIRED: Final = frozenset({"id", "channel", "action", "payload"})
 _ANSWER_FIELDS: Final = frozenset({"question_id", "key", "source", "actor_ref"})
@@ -186,6 +196,8 @@ def payload_to_json(payload: DeliveryPayload) -> dict[str, object]:
         body["approval_id"] = payload.approval_id
     if payload.voice_id is not None:
         body["voice_id"] = payload.voice_id
+    if payload.approval_outcome is not None:
+        body["approval_outcome"] = str(payload.approval_outcome)
     return body
 
 
@@ -238,12 +250,18 @@ def parse_payload(raw: object) -> DeliveryPayload:
     # Present means a real id: `null` is refused like any other non-ULID.
     approval_id = parse_approval_id(fields["approval_id"]) if "approval_id" in fields else None
     voice_id = parse_notification_id(fields["voice_id"]) if "voice_id" in fields else None
+    outcome = (
+        approval_outcome(_str(fields["approval_outcome"], "approval_outcome"))
+        if "approval_outcome" in fields
+        else None
+    )
     return DeliveryPayload(
         content=content,
         question_id=None if question_id is None else parse_question_id(question_id),
         final_state=state,
         approval_id=approval_id,
         voice_id=voice_id,
+        approval_outcome=outcome,
     )
 
 

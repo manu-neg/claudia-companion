@@ -9,6 +9,7 @@ wrapper lives in `interfaces/claudia/kb_mcp.py`.
 from __future__ import annotations
 
 import datetime
+import logging
 import re
 import threading
 import unicodedata
@@ -34,6 +35,8 @@ from preview_dashboard.ports.claudia_host import KbWorktree
 from preview_dashboard.ports.claudia_kb import KbStats, KbStore
 from preview_dashboard.ports.scanner import ContentScanner
 
+logger = logging.getLogger(__name__)
+
 MAX_NOW_LINES: Final = 40
 MAX_TOPIC_WORDS: Final = 150
 MAX_NOTE_WORDS: Final = 300
@@ -45,6 +48,8 @@ MAX_WORKLOG_BYTES: Final = 16384
 MAX_NOTES: Final = 2000
 MAX_TOTAL_BYTES: Final = 8 * 1024 * 1024
 MAX_SOURCE_LEN: Final = 200
+GUIDE_PATH: Final = "guide.md"
+GUIDE_INDEX_LINE: Final = "- [[guide]] - how things work here (host-owned, read-only)\n"
 # Longer than a write's wait: a restore after a failed commit should outlast a short holder.
 RESTORE_LOCK_WAIT_S: Final = 120.0
 
@@ -52,7 +57,7 @@ _SEG: Final = r"[a-z0-9-]{1,48}"
 # ASCII-only on purpose: lower-case segments, so no look-alike or case-twin paths.
 _PATH_RE: Final = re.compile(
     rf"""
-    (?P<fixed>index|now|persona)\.md
+    (?P<fixed>index|now|persona|guide)\.md
     | topics/work-log/(?P<ym>\d{{4}}-\d{{2}})\.md
     | topics/(?P<tcat>{_SEG})/_topic\.md
     | topics/(?P<ncat>{_SEG})/(?P<note>{_SEG})\.md
@@ -76,6 +81,7 @@ class NoteKind(StrEnum):
     INDEX = "index"
     NOW = "now"
     PERSONA = "persona"
+    GUIDE = "guide"  # host-owned reference note, like the persona
     TOPIC = "topic"
     NOTE = "note"
     WORKLOG = "work-log"
@@ -330,12 +336,44 @@ class KbService:
                     created.append(rel)
         return created
 
+    def sync_guide(self) -> bool:
+        """Make `guide.md` equal the bundled guide and keep `index.md` linking it.
+
+        Host-owned like the persona: written straight to the store (never via
+        `write`), overwritten whenever it differs. The index link is appended
+        only if no `[[guide]]` is there. Returns True if anything was written.
+        """
+        want = load_prompt("seed/guide.md").encode("utf-8")
+        changed = False
+        with self._lock:
+            if self._store.read(GUIDE_PATH) != want:
+                self._store.write(GUIDE_PATH, want)
+                changed = True
+            # One lock hold for read + write: a concurrent `kb_write index.md` can't be lost.
+            if self._store.update("index.md", _with_guide_link):
+                changed = True
+        return changed
+
     def _writable_kind(self, relpath: str) -> NoteKind:
         kind = classify(relpath)
         # Checked for every caller: only root edits the persona by hand (C53).
         if kind is NoteKind.PERSONA:
             raise KbRefusedError("persona.md is read-only")
+        if kind is NoteKind.GUIDE:
+            raise KbRefusedError("guide.md is owned by the host and read-only")
         return kind
+
+
+def _with_guide_link(index: bytes | None) -> bytes | None:
+    """The index with the guide link appended, or None if nothing should change."""
+    if index is None or b"[[guide" in index:
+        return None
+    sep = b"" if index.endswith(b"\n") else b"\n"
+    new = index + sep + GUIDE_INDEX_LINE.encode("utf-8")
+    if new.count(b"\n") > MAX_INDEX_LINES or len(new) > MAX_INDEX_BYTES:
+        logger.warning("guide link not added: index.md would exceed its caps")
+        return None
+    return new
 
 
 def _check_caller(caller: str) -> None:

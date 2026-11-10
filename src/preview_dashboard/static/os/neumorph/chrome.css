@@ -1,0 +1,2562 @@
+/*
+  os/neumorph/chrome.css - Neumorph's soft-UI look on top of the OS-neutral app.css: every part is
+  moulded from the one porcelain surface (raised = light up-left + shade down-right, sunken = the
+  same pair inset), the floating shell slab with its app knob, slab windows, sunken list wells,
+  convex keys, pillowy controls, the knowledge-map pearls and the relief backgrounds. Every rule is
+  scoped to :root[data-os="neumorph"]; literal colours live only in the private --neu-* tokens.
+*/
+
+/* --- OS-private tokens: the shadow recipe, key gradients, accents and relief --- */
+
+:root[data-os="neumorph"] {
+  /* The light pair: one light source top-left. */
+  --neu-light: rgb(255 255 255 / 1);
+  --neu-light-soft: rgb(255 255 255 / 0.6);
+  --neu-shade: rgb(163 177 198 / 0.75);
+  --neu-shade-deep: rgb(138 153 178 / 0.62);
+  --neu-groove: rgb(150 164 188 / 0.55);
+  /* The moulded rim: a 1px light edge up-left inside every raised part, a faint shade down-right. */
+  --neu-rim-light: rgb(255 255 255 / 0.85);
+  --neu-rim-shade: rgb(150 164 188 / 0.28);
+  --neu-clear-shade: rgb(163 177 198 / 0);
+  --neu-clear-light: rgb(255 255 255 / 0);
+
+  /* Three elevation steps (controls / cards / overlays) plus hover, press and well variants.
+     Every key state is the same four layers (outer shade, outer light, inner shade, inner light),
+     so raised -> pressed interpolates smoothly instead of flipping at the midpoint. */
+  --neu-raise-xs: 2px 2px 5px var(--neu-shade), -2px -2px 5px var(--neu-light), inset -1px -1px 1px var(--neu-rim-shade), inset 1px 1px 1px var(--neu-rim-light);
+  --neu-raise-xs-hover: 3px 3px 7px var(--neu-shade), -3px -3px 7px var(--neu-light), inset -1px -1px 1px var(--neu-rim-shade), inset 1px 1px 1px var(--neu-rim-light);
+  --neu-raise-sm: var(--bevel-raised);
+  --neu-raise-sm-hover: 6px 6px 14px var(--neu-shade), -6px -6px 14px var(--neu-light), inset -1px -1px 1px var(--neu-rim-shade), inset 1px 1px 1px var(--neu-rim-light);
+  --neu-raise-md: var(--shadow-raised);
+  --neu-raise-lg: var(--shadow-overlay);
+  --neu-press: var(--bevel-pressed);
+  --neu-press-deep: 0 0 0 var(--neu-clear-shade), 0 0 0 var(--neu-clear-light), inset 4px 4px 9px var(--neu-shade-deep), inset -3px -3px 8px var(--neu-light);
+  --neu-press-xs: 0 0 0 var(--neu-clear-shade), 0 0 0 var(--neu-clear-light), inset 2px 2px 4px var(--neu-shade), inset -2px -2px 4px var(--neu-light);
+  /* Flat on the slab, in the same four layers, so a menu row can press in smoothly. */
+  --neu-clear-press: 0 0 0 var(--neu-clear-shade), 0 0 0 var(--neu-clear-light), inset 0 0 0 var(--neu-clear-shade), inset 0 0 0 var(--neu-clear-light);
+  /* A small well (count badges, chips' track): deeper than a pressed chip, crisp at its upper-left. */
+  --neu-well-xs: inset 2px 2px 4px var(--neu-shade-deep), inset -2px -2px 3px var(--neu-light), inset 1px 1px 1px var(--neu-rim-shade);
+  --neu-well: var(--bevel-sunken);
+  --neu-well-deep: inset 8px 8px 18px var(--neu-shade-deep), inset -8px -8px 18px var(--neu-light), inset 2px 2px 3px var(--neu-rim-shade);
+  --neu-tip-shadow: 8px 8px 20px var(--neu-shade), -6px -6px 16px var(--neu-light), inset 1px 1px 1px var(--neu-rim-light);
+
+  /* Faint gradients: convex = lighter top-left, concave reversed; slabs barely tilt. */
+  --neu-convex: linear-gradient(145deg, #edf1f7 0, #dde3ec 100%);
+  --neu-concave: linear-gradient(145deg, #dae0e9 0, #ebeff6 100%);
+  --neu-slab: linear-gradient(150deg, #e8ecf3 0, #e4e9f1 45%, #e0e6ee 100%);
+
+  /* Accent keys: iris convex with a soft coloured glow; red for danger. */
+  --neu-accent-convex: linear-gradient(145deg, #6358e6 0, #4a3fcf 100%);
+  --neu-accent-concave: linear-gradient(145deg, #4136bc 0, #554ad9 100%);
+  --neu-accent-rim: inset -1px -1px 1px rgb(28 20 110 / 0.3), inset 1px 1px 1px rgb(196 190 255 / 0.6);
+  --neu-accent-glow: 5px 5px 14px rgb(81 70 216 / 0.42), -4px -4px 10px var(--neu-light), var(--neu-accent-rim);
+  --neu-accent-glow-hover: 7px 7px 18px rgb(81 70 216 / 0.5), -5px -5px 12px var(--neu-light), var(--neu-accent-rim);
+  --neu-accent-press: 0 0 0 rgb(81 70 216 / 0), 0 0 0 var(--neu-clear-light), inset 3px 3px 7px rgb(28 20 110 / 0.45), inset -3px -3px 7px rgb(150 140 255 / 0.35);
+  --neu-danger-convex: linear-gradient(145deg, #cc3a50 0, #a91f34 100%);
+  --neu-danger-rim: inset -1px -1px 1px rgb(90 10 20 / 0.3), inset 1px 1px 1px rgb(255 190 196 / 0.55);
+  --neu-danger-glow: 5px 5px 14px rgb(184 37 58 / 0.36), -4px -4px 10px var(--neu-light), var(--neu-danger-rim);
+  --neu-danger-glow-hover: 7px 7px 18px rgb(184 37 58 / 0.44), -5px -5px 12px var(--neu-light), var(--neu-danger-rim);
+  --neu-danger-press: 0 0 0 rgb(184 37 58 / 0), 0 0 0 var(--neu-clear-light), inset 3px 3px 7px rgb(90 10 20 / 0.45), inset -3px -3px 7px rgb(255 140 150 / 0.3);
+  --neu-white: #ffffff;
+
+  /* LEDs: tiny lit dots that carry state without relying on shadow. */
+  --neu-led: radial-gradient(circle at 35% 35%, #a49dff 0, #5146d8 55%, #3b31b4 100%);
+  --neu-led-glow: 0 0 6px 1px rgb(81 70 216 / 0.5);
+  --neu-led-warn: radial-gradient(circle at 35% 35%, #ffd27a 0, #d18a00 60%, #9c6400 100%);
+  --neu-led-warn-glow: 0 0 6px 1px rgb(209 138 0 / 0.5);
+
+  /* Text effects: engraved = light edge below-right, as if cut into the surface. */
+  --neu-engrave: 1px 1px 0 rgb(255 255 255 / 0.85);
+
+  /* Shape */
+  --neu-radius-window: 28px;
+  --neu-radius-well: 22px;
+  --neu-radius-panel: 20px;
+  --neu-radius-key: 14px;
+  --neu-radius-row: 14px;
+  --neu-radius-tile: 16px;
+
+  /* Motion (one system; docs/frontend-os.md#neumorph "Motion"). Things rise out of the surface
+     and sink back into it; press is quicker than lift, so a key gives under the finger; a release
+     settles with one small overshoot; exits are faster than entrances. fx/fx.css zeroes them all
+     under reduced motion. */
+  --neu-dur: var(--motion-duration);
+  --neu-dur-press: 70ms;
+  --neu-dur-release: 260ms;
+  --neu-dur-instant: 0ms;
+  --neu-dur-menu-in: 200ms;
+  --neu-dur-menu-out: 120ms;
+  --neu-dur-window-in: 340ms;
+  --neu-dur-window-out: 170ms;
+  --neu-dur-toast-in: 280ms;
+  --neu-dur-toast-out: 180ms;
+  --neu-dur-pop: 380ms;
+  --neu-dur-splash: 560ms;
+  --neu-dur-breathe: 9s;
+  /* Knowledge map: pearls rise in a wave, channels draw and fill, the basin ripples once. */
+  --neu-dur-kmap-rise: 560ms;
+  --neu-dur-kmap-draw: 620ms;
+  --neu-dur-kmap-flow: 600ms;
+  --neu-dur-kmap-ripple: 900ms;
+  --neu-dur-kmap-seat: 420ms;
+  --neu-dur-kmap-page: 300ms;
+  --neu-ease: var(--motion-ease);
+  --neu-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --neu-ease-in: cubic-bezier(0.5, 0, 0.75, 0.4);
+  --neu-ease-press: cubic-bezier(0.25, 0, 0.2, 1);
+  --neu-ease-settle: cubic-bezier(0.3, 1.45, 0.5, 1);
+  --neu-ease-breathe: cubic-bezier(0.45, 0, 0.55, 1);
+  --neu-lift: -1px;
+  --neu-press-depth: 1px;
+  --neu-rise-scale: 0.965;
+  --neu-rise-y: 10px;
+  --neu-sink-scale: 0.975;
+  --neu-menu-scale: 0.94;
+
+  /* Relief backgrounds: shade and light at very low alpha on the one surface. */
+  --neu-relief-shade: rgb(150 164 190 / 0.32);
+  --neu-relief-light: rgb(255 255 255 / 0.75);
+  --neu-relief-shade-soft: rgb(150 164 190 / 0.2);
+  --neu-relief-light-soft: rgb(255 255 255 / 0.5);
+  --neu-orb-hi: #eef1f7;
+  --neu-orb-lo: #d9e0ea;
+  --neu-orb-cast: rgb(140 155 182 / 0.42);
+  --neu-orb-glow: rgb(255 255 255 / 0.95);
+  --neu-orb-sheen: rgb(255 255 255 / 0.45);
+
+  /* Icon art (icons.js; the unscoped neumorph-ic-* rules below): pebbles of the surface with a
+     lit and a shaded copy, stepped sheens, and glyphs in ink and iris. */
+  --neu-ic-face: #e4e9f1;
+  --neu-ic-back: #ccd4e0;
+  --neu-ic-light: rgb(255 255 255 / 0.95);
+  --neu-ic-shade: rgb(146 161 187 / 0.7);
+  --neu-ic-sheen: rgb(255 255 255 / 0.15);
+  --neu-ic-ink: #34405c;
+  --neu-ic-muted: #7d889e;
+  --neu-ic-iris: #5146d8;
+  --neu-ic-warn: #a86400;
+  --neu-ic-paper: #f4f6fa;
+  --neu-ic-white: #ffffff;
+  --neu-ic-lift: rgb(255 255 255 / 0.9);
+  --neu-ic-drop: rgb(128 143 172 / 0.45);
+  --neu-ic-groove: rgb(141 156 182 / 0.75);
+  --neu-ic-track: rgb(150 164 188 / 0.4);
+  --neu-ic-shine: rgb(255 255 255 / 0.7);
+  --neu-ic-cast: rgb(128 143 172 / 0.5);
+  --neu-ic-glow: rgb(255 255 255 / 0.85);
+
+  /* Knowledge map (docs/frontend-os.md#neumorph "Knowledge map"). Category cores: eight hues at
+     one depth, every one >= 3:1 on the porcelain (test_neumorph_kmap.py), iris first. */
+  --kmap-c0: #5a4fd9;
+  --kmap-c1: #1b8379;
+  --kmap-c2: #a8690c;
+  --kmap-c3: #c0446a;
+  --kmap-c4: #2f74c0;
+  --kmap-c5: #4a8650;
+  --kmap-c6: #8a4bb0;
+  --kmap-c7: #5f6c88;
+  /* The basin: a deep moulded well, several inner steps so its floor reads lower than any list. */
+  --neu-kmap-basin: inset 14px 14px 30px rgb(138 153 178 / 0.55), inset -12px -12px 28px rgb(255 255 255 / 0.95), inset 4px 4px 9px rgb(150 164 188 / 0.45), inset -2px -2px 4px rgb(255 255 255 / 0.8), inset 1px 1px 1px rgb(150 164 188 / 0.35);
+  --neu-kmap-basin-ring: inset 0 0 0 3px var(--color-focus);
+  /* Embossed dimples on the floor: a shade dot with a light lip one pixel down-right of it. */
+  --neu-kmap-dimples: radial-gradient(circle, rgb(140 155 182 / 0.26) 0 1.3px, rgb(140 155 182 / 0.08) 2.2px, rgb(140 155 182 / 0) 3px), radial-gradient(circle, rgb(255 255 255 / 0.9) 0 1.5px, rgb(255 255 255 / 0) 3px);
+  --neu-kmap-dimple-size: 32px 32px;
+  --neu-kmap-dimple-at: 0 0, 1.5px 1.5px;
+  /* Pearls: a porcelain dome (the dot's stroke) round a category core (its fill), lit up-left. */
+  --neu-kmap-dome: #f2f5fa;
+  --neu-kmap-pearl: drop-shadow(-1.5px -1.5px 1.2px rgb(255 255 255 / 1)) drop-shadow(2px 2.5px 2.2px rgb(102 118 150 / 0.55));
+  --neu-kmap-socket: rgb(132 148 176 / 0.3);
+  --neu-kmap-socket-lip: rgb(255 255 255 / 0.85);
+  --neu-kmap-shine: rgb(255 255 255 / 0.78);
+  --neu-kmap-k: 1.2;
+  --neu-kmap-socket-k: 1;
+  --neu-kmap-lean: 5px;
+  --neu-kmap-lx: 0;
+  --neu-kmap-ly: 0;
+  --neu-kmap-glint: 0;
+  /* Iris light: the selected note's ring, its channels, recent notes and search matches. */
+  --neu-kmap-iris: rgb(81 70 216 / 1);
+  --neu-kmap-iris-halo: rgb(81 70 216 / 0.16);
+  --neu-kmap-recent: rgb(81 70 216 / 0.55);
+  --neu-kmap-match: rgb(81 70 216 / 0.24);
+  /* Channels: an engraved groove (shade stroke + a light lip filtered onto the whole layer). */
+  --neu-kmap-groove: #a3b0c5;
+  --neu-kmap-groove-tag: #9eacc2;
+  --neu-kmap-lip: drop-shadow(1px 1px 0 rgb(255 255 255 / 1));
+  --neu-kmap-label-plate: #e9edf4;
+  /* Domed swatches and key pips: a highlight up-left over the category colour, a crisp foot. */
+  --neu-kmap-gem: radial-gradient(circle at 34% 30%, rgb(255 255 255 / 0.85) 0, rgb(255 255 255 / 0) 52%);
+  --neu-kmap-gem-shadow: 1.5px 1.5px 3px rgb(120 136 166 / 0.7), -1px -1px 2px rgb(255 255 255 / 1), inset -1.5px -1.5px 2px rgb(20 24 60 / 0.28);
+  --neu-kmap-key-rim: inset 0 0 0 2px rgb(81 70 216 / 0.55);
+  /* Approval code cells: digit pitch, the spacing that centres a digit in it, engraved dividers. */
+  --neu-kmap-cell: 2.3ch;
+  --neu-kmap-cell-gap: 1.3ch;
+  --neu-kmap-cell-shade: rgb(140 155 182 / 0.6);
+  --neu-kmap-cell-light: rgb(255 255 255 / 0.95);
+  /* Set per element by fx/kmap.js (CSSOM): wave delays, channel lengths and flow direction. */
+  --neu-kmap-d: 0ms;
+  --neu-kmap-nd: 0ms;
+  --neu-kmap-len: 0;
+  --neu-kmap-from: 1;
+  /* The note slab's links: an iris groove under the words instead of a browser underline. */
+  --neu-kmap-link-line: rgb(81 70 216 / 0.35);
+  --neu-kmap-link-line-missing: rgb(86 97 121 / 0.45);
+
+  scrollbar-color: var(--color-bevel-dark) transparent;
+}
+
+:root[data-os="neumorph"] ::selection {
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+}
+
+:root[data-os="neumorph"] * {
+  scrollbar-width: thin;
+}
+
+/* One focus ring for everything: a solid iris ring, clear without any shadow. */
+:root[data-os="neumorph"] :focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: 3px;
+}
+
+/* The window area takes focus on navigation (for screen readers); it is not a control. */
+:root[data-os="neumorph"] .main:focus-visible {
+  outline: none;
+}
+
+/* --- desktop: the surface itself; the relief stays put while windows scroll --- */
+
+:root[data-os="neumorph"] body {
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* With Feed/Trash moved into the shell bar (shell.js) the window area takes the full width. */
+:root[data-os="neumorph"] .desktop:not(:has(> .desk-icons)) {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: none;
+}
+
+:root[data-os="neumorph"] .desktop:not(:has(> .desk-icons)) > .main {
+  grid-area: auto;
+}
+
+/* Desk icons left on the desktop (shell.js failed): raised tiles with the icon on them. */
+:root[data-os="neumorph"] .desktop > .desk-icons .desk-icon {
+  padding: var(--space-2) 0;
+  border-radius: var(--neu-radius-tile);
+  background: var(--neu-convex);
+  box-shadow: var(--neu-raise-sm);
+  text-decoration: none;
+}
+
+:root[data-os="neumorph"] .loading {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  box-shadow: var(--neu-raise-sm);
+  color: var(--color-text-muted);
+}
+
+/* --- shell bar: a floating raised slab with the app knob, pill keys and a sunken clock --- */
+
+:root[data-os="neumorph"] .shell-bar {
+  align-items: center;
+  gap: var(--space-2);
+  padding: env(safe-area-inset-top) var(--space-2) 0;
+  background: var(--neu-slab);
+  box-shadow: var(--neu-raise-md);
+  color: var(--color-text);
+  font-weight: var(--font-weight-medium);
+}
+
+/* The app mark: a round raised knob with a lit iris LED in its centre, then the name. */
+:root[data-os="neumorph"] .shell-app {
+  position: relative;
+  gap: var(--space-3);
+  padding: 0 var(--space-2) 0 var(--space-1);
+  font-size: 0;
+}
+
+:root[data-os="neumorph"] .shell-app .icon-sm {
+  display: none;
+}
+
+:root[data-os="neumorph"] .shell-app::before {
+  content: "";
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--neu-convex);
+  box-shadow: var(--neu-raise-sm);
+}
+
+:root[data-os="neumorph"] .shell-app::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--space-1) + 15px);
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--neu-led);
+  box-shadow: var(--neu-led-glow);
+}
+
+/* Feed / Trash as pill keys (moved into the nav slot by shell.js). */
+:root[data-os="neumorph"] .shell-bar .desk-icons {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+:root[data-os="neumorph"] .shell-bar .desk-icon,
+:root[data-os="neumorph"] .shell-link,
+:root[data-os="neumorph"] .shell-menu-trigger {
+  position: relative;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  width: auto;
+  min-height: 40px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-pill);
+  background: var(--neu-convex);
+  box-shadow: var(--neu-raise-sm);
+  color: var(--color-text);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: box-shadow var(--neu-dur-release) var(--neu-ease-settle), transform var(--neu-dur-release) var(--neu-ease-settle);
+}
+
+:root[data-os="neumorph"] .shell-bar .desk-icon .icon-lg {
+  display: none;
+}
+
+:root[data-os="neumorph"] .shell-bar .desk-icon-label {
+  font-size: var(--font-size-base);
+}
+
+/* "5 items" stays for screen readers; the badge shows the number. */
+:root[data-os="neumorph"] .shell-bar .desk-icon-label small {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Hover: the key lifts a hair higher (deeper pair, 1px up). */
+:root[data-os="neumorph"] .shell-bar .desk-icon:hover,
+:root[data-os="neumorph"] .shell-link:hover,
+:root[data-os="neumorph"] .shell-menu-trigger:hover {
+  box-shadow: var(--neu-raise-sm-hover);
+  transform: translateY(var(--neu-lift));
+}
+
+/* Current section / open picker: the key is pressed in and lit in the accent. Pressing is quick;
+   letting go settles back with the base rule's overshoot. */
+:root[data-os="neumorph"] .shell-bar .desk-icon[aria-current="page"],
+:root[data-os="neumorph"] .shell-link[aria-current="page"],
+:root[data-os="neumorph"] .shell-menu-trigger[aria-expanded="true"],
+:root[data-os="neumorph"] .shell-bar .desk-icon:active,
+:root[data-os="neumorph"] .shell-link:active,
+:root[data-os="neumorph"] .shell-menu-trigger:active {
+  box-shadow: var(--neu-press);
+  transform: translateY(var(--neu-press-depth));
+  transition-duration: var(--neu-dur-press);
+  transition-timing-function: var(--neu-ease-press);
+}
+
+/* A current key doesn't move under hover: it is already pressed home. */
+:root[data-os="neumorph"] .shell-bar .desk-icon[aria-current="page"]:not(:active),
+:root[data-os="neumorph"] .shell-link[aria-current="page"]:not(:active),
+:root[data-os="neumorph"] .shell-menu-trigger[aria-expanded="true"]:not(:active) {
+  transform: none;
+  transition-duration: var(--neu-dur-release);
+  transition-timing-function: var(--neu-ease);
+}
+
+:root[data-os="neumorph"] .shell-bar .desk-icon[aria-current="page"],
+:root[data-os="neumorph"] .shell-link[aria-current="page"],
+:root[data-os="neumorph"] .shell-menu-trigger[aria-expanded="true"] {
+  color: var(--color-accent);
+  font-weight: var(--font-weight-strong);
+}
+
+/* Count badge: the number in a small sunken capsule (alt text "" so it isn't read twice). */
+:root[data-os="neumorph"] .shell-bar .desk-icon[data-count-value]::after {
+  content: attr(data-count-value) / "";
+  min-width: 24px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  box-shadow: var(--neu-well-xs);
+  color: var(--color-accent);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-strong);
+  line-height: 22px;
+  text-align: center;
+}
+
+:root[data-os="neumorph"] .shell-bar .desk-icon[data-nav="trash"]::after {
+  color: var(--color-text-muted);
+}
+
+:root[data-os="neumorph"] .shell-bar .desk-icon[data-count-value="0"]::after {
+  display: none;
+}
+
+:root[data-os="neumorph"] .shell-link {
+  justify-content: center;
+}
+
+:root[data-os="neumorph"] .shell-link .icon-sm {
+  width: 18px;
+  height: 18px;
+}
+
+/* Pickers sit at the right edge, before the clock. */
+:root[data-os="neumorph"] [data-shellbar] [data-slot="background"] {
+  margin-left: auto;
+}
+
+:root[data-os="neumorph"] .shell-slot,
+:root[data-os="neumorph"] .shell-menu-anchor {
+  align-items: center;
+}
+
+/* The clock: a sunken readout. */
+:root[data-os="neumorph"] .shell-clock {
+  min-height: 36px;
+  margin: 0 var(--space-1) 0 0;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--neu-press);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-strong);
+  letter-spacing: 0.02em;
+}
+
+:root[data-os="neumorph"] .shell-clock:empty {
+  display: none;
+}
+
+/* Picker drop-downs: floating slabs (top elevation), options as soft rows. */
+:root[data-os="neumorph"] .shell-menu {
+  top: calc(100% + var(--space-3));
+  min-width: 11rem;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--neu-radius-panel);
+  background: var(--neu-slab);
+  box-shadow: var(--neu-raise-lg);
+  font-size: var(--font-size-base);
+}
+
+/* Options rest flat on the slab; hover/focus presses one in as a capsule with iris text. */
+:root[data-os="neumorph"] .shell-menu-option {
+  position: relative;
+  padding: var(--space-1) var(--space-3) var(--space-1) 2.25rem;
+  border-radius: var(--radius-pill);
+  box-shadow: var(--neu-clear-press);
+  font-weight: var(--font-weight-medium);
+  transition: box-shadow var(--neu-dur) var(--neu-ease);
+}
+
+:root[data-os="neumorph"] .shell-menu-option + .shell-menu-option,
+:root[data-os="neumorph"] .shell-menu li + li {
+  margin-top: 2px;
+}
+
+:root[data-os="neumorph"] .shell-menu-option:hover,
+:root[data-os="neumorph"] .shell-menu-option:focus-visible {
+  outline: none;
+  background: transparent;
+  box-shadow: var(--neu-press);
+  color: var(--color-accent);
+}
+
+:root[data-os="neumorph"] .shell-menu-option:active {
+  box-shadow: var(--neu-press-deep);
+  transition-duration: var(--neu-dur-press);
+}
+
+/* Keyboard focus keeps a ring, shaped to the capsule and clear of its inner shading. */
+:root[data-os="neumorph"] .shell-menu-option:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* The checked option: accent text and a lit LED instead of the neutral check mark. */
+:root[data-os="neumorph"] .shell-menu-option::before {
+  content: "";
+  position: absolute;
+  left: var(--space-3);
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
+  border-radius: 50%;
+  box-shadow: var(--neu-press-xs);
+}
+
+:root[data-os="neumorph"] .shell-menu-option[aria-checked="true"] {
+  color: var(--color-accent);
+  font-weight: var(--font-weight-strong);
+}
+
+:root[data-os="neumorph"] .shell-menu-option[aria-checked="true"]::before {
+  content: "";
+  background: var(--neu-led);
+  box-shadow: var(--neu-led-glow);
+}
+
+/* --- windows: big raised slabs; the title bar is part of the slab --- */
+
+:root[data-os="neumorph"] .window {
+  border: 0;
+  border-radius: var(--neu-radius-window);
+  background: var(--neu-slab);
+  box-shadow: var(--neu-raise-md);
+}
+
+:root[data-os="neumorph"] .titlebar {
+  gap: var(--space-2);
+  min-height: var(--titlebar-height);
+  padding: var(--space-3) var(--space-5) 0;
+}
+
+:root[data-os="neumorph"] .titlebar-title {
+  flex: 1;
+  font-size: 1.25rem;
+  font-weight: var(--font-weight-strong);
+  letter-spacing: var(--letter-spacing-heading);
+}
+
+/* The real close control (a link back): a round raised knob that presses in; 44px hit area. */
+:root[data-os="neumorph"] .titlebar-close {
+  position: relative;
+  flex: none;
+  margin: 0 0 0 calc(-1 * var(--space-2));
+  color: var(--color-text-muted);
+  font-size: 1.25rem;
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
+}
+
+:root[data-os="neumorph"] .titlebar-close::before {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--neu-convex);
+  box-shadow: var(--neu-raise-sm);
+  transition: box-shadow var(--neu-dur-release) var(--neu-ease-settle), transform var(--neu-dur-release) var(--neu-ease-settle);
+}
+
+:root[data-os="neumorph"] .titlebar-close:hover {
+  color: var(--color-text);
+}
+
+:root[data-os="neumorph"] .titlebar-close:hover::before {
+  box-shadow: var(--neu-raise-sm-hover);
+  transform: translateY(var(--neu-lift));
+}
+
+:root[data-os="neumorph"] .titlebar-close:active::before {
+  box-shadow: var(--neu-press);
+  transform: translateY(var(--neu-press-depth)) scale(0.96);
+  transition-duration: var(--neu-dur-press);
+  transition-timing-function: var(--neu-ease-press);
+}
+
+:root[data-os="neumorph"] .titlebar-close:focus-visible {
+  outline: none;
+}
+
+:root[data-os="neumorph"] .titlebar-close:focus-visible::before {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: 3px;
+}
+
+:root[data-os="neumorph"] .window-body {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+:root[data-os="neumorph"] .window-alert {
+  padding: var(--space-5);
+}
+
+/* --- lists: a sunken well, rows flat in it; hover lifts a row into a raised capsule --- */
+
+:root[data-os="neumorph"] .finder-header {
+  margin-bottom: var(--space-3);
+  border-bottom: 0;
+}
+
+:root[data-os="neumorph"] .show-menu {
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-medium);
+}
+
+:root[data-os="neumorph"] .inset {
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--neu-radius-well);
+  background: var(--color-surface);
+  box-shadow: var(--neu-well);
+}
+
+/* Column heads: small engraved caps. */
+:root[data-os="neumorph"] .list-head {
+  min-height: 2.25rem;
+  margin-bottom: var(--space-1);
+  background: transparent;
+  border-bottom: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-strong);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-shadow: var(--neu-engrave);
+}
+
+:root[data-os="neumorph"] .list-head .is-sorted {
+  background: transparent;
+  color: var(--color-accent);
+}
+
+/* Rows are wide, so their lift is never a shadow animation: two pre-rendered layers (raised
+   capsule, pressed capsule) sit behind the row and cross-fade with opacity only. */
+:root[data-os="neumorph"] .row {
+  position: relative;
+  isolation: isolate;
+  border-bottom: 0;
+  border-radius: var(--neu-radius-row);
+}
+
+:root[data-os="neumorph"] .row::before,
+:root[data-os="neumorph"] .row::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  opacity: 0;
+  pointer-events: none;
+}
+
+:root[data-os="neumorph"] .row::before {
+  background: var(--neu-convex);
+  box-shadow: var(--neu-raise-sm);
+  transform: scale(0.99);
+  transition: opacity var(--neu-dur) var(--neu-ease), transform var(--neu-dur-release) var(--neu-ease-settle);
+}
+
+:root[data-os="neumorph"] .row::after {
+  background: var(--neu-concave);
+  box-shadow: var(--neu-press);
+  transition: opacity var(--neu-dur-release) var(--neu-ease);
+}
+
+:root[data-os="neumorph"] .row + .row {
+  margin-top: 2px;
+}
+
+:root[data-os="neumorph"] .row:hover::before,
+:root[data-os="neumorph"] .row:focus-within::before {
+  opacity: 1;
+  transform: none;
+}
+
+:root[data-os="neumorph"] .row:has(.row-link:active)::after {
+  opacity: 1;
+  transition-duration: var(--neu-dur-press);
+}
+
+:root[data-os="neumorph"] .row-link {
+  border-radius: var(--neu-radius-row);
+  background: transparent;
+}
+
+:root[data-os="neumorph"] .row-link:hover,
+:root[data-os="neumorph"] .row-link:focus-visible,
+:root[data-os="neumorph"] .row-link:active {
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text);
+}
+
+:root[data-os="neumorph"] .row-link:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: -3px;
+}
+
+/* The selection's accent lives in the title, so it reads without the shadow. */
+:root[data-os="neumorph"] .row-link:hover .row-title,
+:root[data-os="neumorph"] .row-link:focus-visible .row-title,
+:root[data-os="neumorph"] .row-link:active .row-title {
+  color: var(--color-accent);
+  font-weight: var(--font-weight-strong);
+}
+
+:root[data-os="neumorph"] .row-link .cell-date,
+:root[data-os="neumorph"] .row-link:hover .cell-date {
+  background: transparent;
+}
+
+:root[data-os="neumorph"] .row-link .cell-date,
+:root[data-os="neumorph"] .row-link .cell-kind,
+:root[data-os="neumorph"] .row-link .cell-size {
+  color: var(--color-text-muted);
+}
+
+:root[data-os="neumorph"] .row-link:hover .row-sub,
+:root[data-os="neumorph"] .row-link:focus-visible .row-sub,
+:root[data-os="neumorph"] .row-link:active .row-sub,
+:root[data-os="neumorph"] .row-link:hover .kind-detail,
+:root[data-os="neumorph"] .row-link:focus-visible .kind-detail,
+:root[data-os="neumorph"] .row-link:active .kind-detail {
+  color: var(--color-text-muted);
+}
+
+:root[data-os="neumorph"] .row-title {
+  font-weight: var(--font-weight-medium);
+}
+
+/* The row's "…": a small round key (the hit area stays the neutral size). */
+/* The ellipsis glyph sits on the baseline; the padding centres it in the knob. */
+:root[data-os="neumorph"] .row-more {
+  position: relative;
+  isolation: isolate;
+  padding-bottom: 0.4em;
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-strong);
+}
+
+:root[data-os="neumorph"] .row-more::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: -1;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  border-radius: 50%;
+  background: var(--neu-convex);
+  box-shadow: var(--neu-raise-xs);
+  transition: box-shadow var(--neu-dur-release) var(--neu-ease-settle), transform var(--neu-dur-release) var(--neu-ease-settle);
+}
+
+:root[data-os="neumorph"] .row-more:hover::before,
+:root[data-os="neumorph"] .row-more[aria-expanded="true"]::before {
+  box-shadow: var(--neu-raise-xs-hover);
+  transform: translateY(var(--neu-lift));
+}
+
+:root[data-os="neumorph"] .row-more:active::before {
+  box-shadow: var(--neu-press-xs);
+  transform: translateY(var(--neu-press-depth)) scale(0.94);
+  transition-duration: var(--neu-dur-press);
+  transition-timing-function: var(--neu-ease-press);
+}
+
+:root[data-os="neumorph"] .row-more:hover,
+:root[data-os="neumorph"] .row-more:focus-visible {
+  color: var(--color-accent);
+}
+
+:root[data-os="neumorph"] .row-more:focus-visible {
+  outline-offset: -4px;
+  border-radius: 50%;
+}
+
+:root[data-os="neumorph"] .statusbar {
+  padding: var(--space-2) var(--space-2) 0;
+  font-weight: var(--font-weight-medium);
+  text-shadow: var(--neu-engrave);
+}
+
+/* The resize grip belongs to window chrome Neumorph doesn't have. */
+:root[data-os="neumorph"] .grow {
+  display: none;
+}
+
+:root[data-os="neumorph"] .empty {
+  text-shadow: var(--neu-engrave);
+}
+
+/* --- icons: each one is its own raised pebble (icons.js); a soft cast shadow and a light halo
+   on the whole glyph lift it off whatever it sits on --- */
+
+:root[data-os="neumorph"] .icon,
+:root[data-os="neumorph"] .icon-sm,
+:root[data-os="neumorph"] .icon-lg {
+  shape-rendering: geometricPrecision;
+  overflow: visible;
+}
+
+:root[data-os="neumorph"] .icon {
+  filter: drop-shadow(1.5px 2px 2px var(--neu-ic-cast)) drop-shadow(-1px -1px 1.5px var(--neu-ic-glow));
+}
+
+:root[data-os="neumorph"] .icon-lg {
+  filter: drop-shadow(2.5px 3px 4px var(--neu-ic-cast)) drop-shadow(-2px -2px 3px var(--neu-ic-glow));
+}
+
+:root[data-os="neumorph"] .icon-sm {
+  filter: drop-shadow(0.75px 1px 1px var(--neu-ic-cast));
+}
+
+/* The pebble fills 26 of the 32 viewBox units, so each box is sized for the tile it shows:
+   info head ≈ 72px tile (a proud raised key, as in N1), file rows ≈ 23px, list rows ≈ 32px. */
+:root[data-os="neumorph"] .info-top > .icon-lg,
+:root[data-os="neumorph"] .alert > .icon-lg {
+  width: 88px;
+  height: 88px;
+  margin: -4px var(--space-1) -4px -6px;
+  filter: drop-shadow(4px 5px 6px var(--neu-ic-cast)) drop-shadow(-3px -3px 5px var(--neu-ic-glow));
+}
+
+:root[data-os="neumorph"] .file .icon-sm {
+  width: 28px;
+  height: 28px;
+  margin-block: -4px;
+  filter: drop-shadow(1px 1.5px 1.5px var(--neu-ic-cast)) drop-shadow(-1px -1px 1px var(--neu-ic-glow));
+}
+
+:root[data-os="neumorph"] .pin {
+  width: 14px;
+  height: 14px;
+  filter: drop-shadow(0.75px 1px 0.75px var(--neu-ic-cast));
+}
+
+:root[data-os="neumorph"] .sort-dir {
+  margin-left: 2px;
+}
+
+/* --- controls: convex keys that turn concave when pressed --- */
+
+:root[data-os="neumorph"] .button,
+:root[data-os="neumorph"] .stage-close {
+  border: 0;
+  border-radius: var(--neu-radius-key);
+  background: var(--neu-convex);
+  box-shadow: var(--neu-raise-sm);
+  color: var(--color-text);
+  font-weight: var(--font-weight-medium);
+  transition: box-shadow var(--neu-dur-release) var(--neu-ease-settle), transform var(--neu-dur-release) var(--neu-ease-settle);
+}
+
+/* rest -> hover: lifts 1px on a deeper pair; -> press: sinks 1px, the pair rolls inward (quick);
+   release: back up with one small overshoot (the base rule's settle curve). */
+:root[data-os="neumorph"] .button:hover,
+:root[data-os="neumorph"] .stage-close:hover {
+  box-shadow: var(--neu-raise-sm-hover);
+  transform: translateY(var(--neu-lift));
+}
+
+:root[data-os="neumorph"] .button:active,
+:root[data-os="neumorph"] .stage-close:active {
+  box-shadow: var(--neu-press);
+  transform: translateY(var(--neu-press-depth));
+  transition-duration: var(--neu-dur-press);
+  transition-timing-function: var(--neu-ease-press);
+}
+
+:root[data-os="neumorph"] .button:disabled {
+  box-shadow: var(--neu-raise-xs);
+  color: var(--color-text-muted);
+  transform: none;
+}
+
+/* The default action: an iris key with a soft accent glow. */
+:root[data-os="neumorph"] .button-primary {
+  background: var(--neu-accent-convex);
+  box-shadow: var(--neu-accent-glow);
+  color: var(--color-accent-contrast);
+  font-weight: var(--font-weight-strong);
+}
+
+:root[data-os="neumorph"] .button-primary:hover {
+  box-shadow: var(--neu-accent-glow-hover);
+}
+
+/* The fill stays put on press (a gradient can't interpolate); the inner pair does the sinking. */
+:root[data-os="neumorph"] .button-primary:active {
+  box-shadow: var(--neu-accent-press);
+}
+
+:root[data-os="neumorph"] .button-danger {
+  background: var(--neu-danger-convex);
+  box-shadow: var(--neu-danger-glow);
+  color: var(--color-danger-contrast);
+  font-weight: var(--font-weight-strong);
+}
+
+:root[data-os="neumorph"] .button-danger:hover {
+  box-shadow: var(--neu-danger-glow-hover);
+}
+
+:root[data-os="neumorph"] .button-danger:active {
+  box-shadow: var(--neu-danger-press);
+}
+
+:root[data-os="neumorph"] .button-danger-quiet {
+  color: var(--color-danger);
+}
+
+:root[data-os="neumorph"] .link-button {
+  color: var(--color-accent);
+  font-weight: var(--font-weight-medium);
+  text-decoration-thickness: 1px;
+}
+
+:root[data-os="neumorph"] .file-action {
+  min-height: 2rem;
+  margin-left: var(--space-2);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--neu-convex);
+  box-shadow: var(--neu-raise-xs);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+  transition: box-shadow var(--neu-dur-release) var(--neu-ease-settle), transform var(--neu-dur-release) var(--neu-ease-settle);
+}
+
+:root[data-os="neumorph"] .file-action:hover {
+  box-shadow: var(--neu-raise-xs-hover);
+  color: var(--color-accent);
+  transform: translateY(var(--neu-lift));
+}
+
+:root[data-os="neumorph"] .file-action:active,
+:root[data-os="neumorph"] .file-action[aria-pressed="true"] {
+  box-shadow: var(--neu-press-xs);
+  color: var(--color-accent);
+  transform: none;
+  transition-duration: var(--neu-dur-press);
+  transition-timing-function: var(--neu-ease-press);
+}
+
+/* Toggles ([aria-pressed]) stay pressed in and lit while on. */
+:root[data-os="neumorph"] .button[aria-pressed="true"] {
+  box-shadow: var(--neu-press);
+  color: var(--color-accent);
+  font-weight: var(--font-weight-strong);
+  transform: none;
+}
+
+/* Map / List: a segmented control - a sunken track whose active key rises out of it. */
+:root[data-os="neumorph"] .kmap-views {
+  gap: 2px;
+  padding: 4px;
+  border-radius: var(--radius-pill);
+  box-shadow: var(--neu-well-xs);
+}
+
+:root[data-os="neumorph"] .kmap-view {
+  min-height: 36px;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  box-shadow: var(--neu-clear-press);
+  color: var(--color-text-muted);
+}
+
+:root[data-os="neumorph"] .kmap-view:hover {
+  box-shadow: var(--neu-clear-press);
+  color: var(--color-text);
+  transform: none;
+}
+
+:root[data-os="neumorph"] .kmap-view:active {
+  box-shadow: var(--neu-press-xs);
+}
+
+:root[data-os="neumorph"] .kmap-view[aria-pressed="true"] {
+  background: var(--neu-convex);
+  box-shadow: var(--neu-raise-xs);
+  color: var(--color-accent);
+  font-weight: var(--font-weight-strong);
+  transform: none;
+}
+
+/* Drop-downs: a soft key with a round knob carrying the arrow (drawn here, not the sprite). */
+:root[data-os="neumorph"] .select {
+  padding-right: 3rem;
+  border: 0;
+  border-radius: var(--neu-radius-key);
+  background: var(--neu-convex);
+  box-shadow: var(--neu-raise-sm);
+  color: var(--color-text);
+  font-weight: var(--font-weight-medium);
+  transition: box-shadow var(--neu-dur-release) var(--neu-ease-settle);
+}
+
+/* The drop-down lifts on its shadow only: a moving select would leave its arrow knob behind. */
+:root[data-os="neumorph"] .select:hover {
+  box-shadow: var(--neu-raise-sm-hover);
+}
+
+:root[data-os="neumorph"] .select:active {
+  box-shadow: var(--neu-press);
+  transition-duration: var(--neu-dur-press);
+}
+
+:root[data-os="neumorph"] .popup-arrow {
+  display: none;
+}
+
+:root[data-os="neumorph"] .popup::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  width: 24px;
+  height: 24px;
+  margin-top: -12px;
+  border-radius: 50%;
+  background: var(--neu-concave);
+  box-shadow: var(--neu-press-xs);
+  pointer-events: none;
+}
+
+:root[data-os="neumorph"] .popup::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  width: 6px;
+  height: 6px;
+  margin-top: -5px;
+  border-right: 2px solid var(--color-accent);
+  border-bottom: 2px solid var(--color-accent);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+/* Text inputs are sunken into the surface. */
+:root[data-os="neumorph"] .kmap-search,
+:root[data-os="neumorph"] .kmap-code-input {
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  box-shadow: var(--neu-press);
+  color: var(--color-text);
+}
+
+:root[data-os="neumorph"] .kmap-search {
+  padding: 0 var(--space-4);
+  font-family: var(--font-body);
+}
+
+:root[data-os="neumorph"] .kmap-search::placeholder {
+  color: var(--color-text-muted);
+}
+
+/* --- Get Info window --- */
+
+:root[data-os="neumorph"] .info-top {
+  align-items: center;
+  gap: var(--space-4);
+  padding-bottom: var(--space-4);
+  border-bottom: 0;
+}
+
+/* The way back: a compact secondary pill with a chevron, set apart from the close knob and the
+   title above it and aligned with the content's left edge below. */
+:root[data-os="neumorph"] .info-nav {
+  padding: var(--space-2) 0 var(--space-4);
+}
+
+:root[data-os="neumorph"] .back-button {
+  position: relative;
+  min-height: 36px;
+  padding: 0 var(--space-4) 0 2rem;
+  border-radius: var(--radius-pill);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+:root[data-os="neumorph"] .back-button::before {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -4px;
+  border-left: 2px solid var(--color-accent);
+  border-bottom: 2px solid var(--color-accent);
+  transform: rotate(45deg);
+}
+
+:root[data-os="neumorph"] .back-button:hover {
+  color: var(--color-text);
+}
+
+:root[data-os="neumorph"] .item-title {
+  font-weight: var(--font-weight-strong);
+  letter-spacing: var(--letter-spacing-heading);
+}
+
+/* The preview screen: a deep sunken well; the media sits rounded inside it. */
+:root[data-os="neumorph"] .screen,
+:root[data-os="neumorph"] .item-preview > .preview-empty {
+  padding: var(--space-3);
+  border: 0;
+  border-radius: var(--neu-radius-well);
+  background: var(--color-surface);
+  box-shadow: var(--neu-well-deep);
+}
+
+:root[data-os="neumorph"] .screen .stage {
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: transparent;
+}
+
+:root[data-os="neumorph"] .screen .stage-frame {
+  border-radius: var(--radius-sm);
+}
+
+:root[data-os="neumorph"] .preview-toolbar {
+  margin-bottom: var(--space-3);
+}
+
+:root[data-os="neumorph"] .preview-label {
+  font-weight: var(--font-weight-medium);
+}
+
+/* Fields: an embossed panel. */
+:root[data-os="neumorph"] .fields {
+  padding: var(--space-4) var(--space-4);
+  border-radius: var(--neu-radius-panel);
+  background: var(--neu-convex);
+  box-shadow: var(--neu-raise-sm);
+}
+
+:root[data-os="neumorph"] .field dt {
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-medium);
+}
+
+:root[data-os="neumorph"] .label-dot {
+  width: 10px;
+  height: 10px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--neu-led);
+  box-shadow: var(--neu-led-glow);
+}
+
+/* Group box ("Files"): an embossed panel, its title engraved above the file cards. */
+:root[data-os="neumorph"] .group {
+  margin: var(--space-5) 0 var(--space-5);
+  padding: var(--space-4) var(--space-3) var(--space-3);
+  border: 0;
+  border-radius: var(--neu-radius-panel);
+  background: var(--neu-convex);
+  box-shadow: var(--neu-raise-sm);
+}
+
+:root[data-os="neumorph"] .group-title {
+  position: static;
+  padding: 0 var(--space-2) var(--space-3);
+  background: none;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-strong);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-shadow: var(--neu-engrave);
+}
+
+:root[data-os="neumorph"] .files {
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* Each file: a small raised card; the selected one is pressed in and lit. */
+:root[data-os="neumorph"] .file {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 0;
+  border-radius: var(--radius-sm);
+  background: var(--neu-slab);
+  box-shadow: var(--neu-raise-xs);
+}
+
+:root[data-os="neumorph"] .file.is-selected {
+  background: var(--neu-concave);
+  box-shadow: var(--neu-press-xs);
+}
+
+:root[data-os="neumorph"] .file.is-selected .file-name {
+  color: var(--color-accent);
+  font-weight: var(--font-weight-strong);
+}
+
+/* "Opens first": an embossed chip, raised a step off the pressed-in card it labels. */
+:root[data-os="neumorph"] .file-entry {
+  padding: 2px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--neu-convex);
+  box-shadow: var(--neu-raise-xs);
+  color: var(--color-accent);
+  font-weight: var(--font-weight-strong);
+}
+
+:root[data-os="neumorph"] .item-actions {
+  padding-top: var(--space-2);
+}
+
+/* --- notes, balloons, toast: surface slabs; an LED says "note" without a yellow fill --- */
+
+:root[data-os="neumorph"] .balloon,
+:root[data-os="neumorph"] .version-notice {
+  position: relative;
+  padding: var(--space-3) var(--space-4) var(--space-3) 2.5rem;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--neu-raise-sm);
+  color: var(--color-text);
+}
+
+:root[data-os="neumorph"] .balloon::before,
+:root[data-os="neumorph"] .version-notice::before {
+  content: "";
+  position: absolute;
+  left: var(--space-4);
+  top: calc(var(--space-3) + 0.4em);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--neu-led-warn);
+  box-shadow: var(--neu-led-warn-glow);
+}
+
+:root[data-os="neumorph"] .balloon-help {
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  box-shadow: var(--neu-tip-shadow);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-weight: var(--font-weight-medium);
+}
+
+/* The tail: a rotated square of the same surface, lit or shaded by the side it sits on. */
+:root[data-os="neumorph"] .balloon-help::before {
+  content: "";
+  position: absolute;
+  left: var(--space-4);
+  width: 12px;
+  height: 12px;
+  background: var(--color-surface);
+  transform: rotate(45deg);
+}
+
+:root[data-os="neumorph"] .balloon-help[data-tail="top"]::before {
+  top: -6px;
+  box-shadow: -2px -2px 3px var(--neu-light-soft);
+}
+
+:root[data-os="neumorph"] .balloon-help[data-tail="bottom"]::before {
+  bottom: -6px;
+  box-shadow: 3px 3px 5px var(--neu-shade);
+}
+
+:root[data-os="neumorph"] .toast {
+  padding: var(--space-3) var(--space-5) var(--space-3) 2.75rem;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--neu-slab);
+  box-shadow: var(--neu-raise-lg);
+  color: var(--color-text);
+  font-weight: var(--font-weight-medium);
+}
+
+:root[data-os="neumorph"] .toast::before {
+  content: "";
+  position: absolute;
+  left: var(--space-5);
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--neu-led);
+  box-shadow: var(--neu-led-glow);
+}
+
+/* --- context menu and the confirm dialog: the top elevation step --- */
+
+:root[data-os="neumorph"] .ctx-menu {
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--neu-radius-panel);
+  background: var(--neu-slab);
+  box-shadow: var(--neu-raise-lg);
+}
+
+/* Items rest flat; hover/focus presses one in as a capsule with iris text (as in the pickers). */
+:root[data-os="neumorph"] .ctx-menu-item {
+  border-radius: var(--radius-pill);
+  box-shadow: var(--neu-clear-press);
+  font-weight: var(--font-weight-medium);
+  transition: box-shadow var(--neu-dur) var(--neu-ease);
+}
+
+:root[data-os="neumorph"] .ctx-menu-item:focus:not(:focus-visible) {
+  outline: none;
+  background: transparent;
+}
+
+/* Pointer: the hovered item presses in; the item the menu focused on opening stays flat (plain
+   :focus is not styled), so the mouse never sees two capsules or a ring. */
+:root[data-os="neumorph"] .ctx-menu-item:not([aria-disabled="true"]):hover,
+:root[data-os="neumorph"] .ctx-menu-item:not([aria-disabled="true"]):focus-visible {
+  outline: none;
+  background: transparent;
+  box-shadow: var(--neu-press);
+  color: var(--color-accent);
+}
+
+:root[data-os="neumorph"] .ctx-menu-item:not([aria-disabled="true"]):active {
+  box-shadow: var(--neu-press-deep);
+  transition-duration: var(--neu-dur-press);
+}
+
+/* Keyboard focus keeps its ring, drawn around the capsule and clear of its inner shading. */
+:root[data-os="neumorph"] .ctx-menu-item:not([aria-disabled="true"]):focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+:root[data-os="neumorph"] .ctx-menu-item.is-danger:not([aria-disabled="true"]):hover,
+:root[data-os="neumorph"] .ctx-menu-item.is-danger:not([aria-disabled="true"]):focus-visible {
+  color: var(--color-danger);
+}
+
+:root[data-os="neumorph"] .ctx-menu-item[aria-disabled="true"] {
+  color: var(--color-text-muted);
+  opacity: 0.6;
+}
+
+/* Separators: an engraved groove (shade line with a light line under it). */
+:root[data-os="neumorph"] .ctx-menu-sep {
+  margin: var(--space-2) var(--space-3);
+  border-top: var(--border-width) solid var(--neu-groove);
+  box-shadow: 0 1px 0 var(--neu-light);
+}
+
+:root[data-os="neumorph"] .dialog {
+  padding: var(--space-5);
+  border: 0;
+  border-radius: var(--neu-radius-window);
+  background: var(--neu-slab);
+  box-shadow: var(--neu-raise-lg);
+}
+
+:root[data-os="neumorph"] .dialog::backdrop {
+  background: var(--color-overlay);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+
+:root[data-os="neumorph"] .alert-title {
+  font-weight: var(--font-weight-strong);
+}
+
+/* The full-screen preview: the surface veil; its close is a raised key. */
+:root[data-os="neumorph"] .stage.is-expanded {
+  background: var(--color-overlay);
+}
+
+:root[data-os="neumorph"] .stage.is-expanded .stage-close {
+  box-shadow: var(--neu-raise-lg);
+}
+
+/* --- knowledge map (N3): Claudia's memory as a porcelain basin. The floor is a deep moulded well
+   with embossed dimples; notes are pearls (a porcelain dome round a category core) seated in
+   sockets; links are engraved channels; index, note and approvals are slabs, wells and keys.
+   Hover lifts a pearl, press seats it, select rings it with iris light; every state reads
+   without motion. fx/kmap.js + fx/fx.css add the pointer light, the opening wave, the ripple
+   and the iris flow along the channels; nothing here needs them. --- */
+
+:root[data-os="neumorph"] .kmap-controls {
+  gap: var(--space-3);
+}
+
+:root[data-os="neumorph"] .kmap-stage {
+  gap: var(--space-5);
+}
+
+/* The basin. Its padding goes: the svg fills it edge to edge (absolute, inset 0). */
+:root[data-os="neumorph"] .kmap-map {
+  isolation: isolate;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: var(--neu-radius-well);
+  background-color: var(--color-surface);
+  background-image: var(--neu-kmap-dimples);
+  background-position: var(--neu-kmap-dimple-at);
+  background-size: var(--neu-kmap-dimple-size);
+  box-shadow: var(--neu-kmap-basin);
+}
+
+/* Keyboard focus on the map lights the basin's rim in iris, rounded like the well; the browser
+   box outline never shows (a mouse press focuses the svg too). */
+:root[data-os="neumorph"] .kmap-svg:focus,
+:root[data-os="neumorph"] .kmap-svg:focus-visible {
+  outline: none;
+}
+
+:root[data-os="neumorph"] .kmap-map:has(> .kmap-svg:focus-visible) {
+  box-shadow: var(--neu-kmap-basin), var(--neu-kmap-basin-ring);
+}
+
+:root[data-os="neumorph"] .kmap-svg:active {
+  cursor: grabbing;
+}
+
+/* Loading, empty and error: engraved words under an empty socket in the basin floor. */
+:root[data-os="neumorph"] .kmap-message {
+  flex-direction: column;
+  gap: var(--space-4);
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-medium);
+  text-shadow: var(--neu-engrave);
+}
+
+/* "Try again" in the basin is a soft key, not a bare link. */
+:root[data-os="neumorph"] .kmap-message .link-button {
+  min-height: var(--tap-target);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-pill);
+  background: var(--neu-convex);
+  box-shadow: var(--neu-raise-sm);
+  text-decoration: none;
+  text-shadow: none;
+}
+
+:root[data-os="neumorph"] .kmap-message .link-button:active {
+  box-shadow: var(--neu-press);
+}
+
+:root[data-os="neumorph"] .kmap-message::before {
+  content: "";
+  flex: none;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  box-shadow: var(--neu-well);
+}
+
+/* Channels: an engraved groove; the light lip is one drop-shadow on the whole layer (one filter
+   pass, not one per line). Tag links are a dotted engraving (round caps on near-zero dashes).
+   The layer has no neutral hook, so it is found by what it holds. */
+:root[data-os="neumorph"] .kmap-svg g:has(> .kmap-edge) {
+  filter: var(--neu-kmap-lip);
+}
+
+:root[data-os="neumorph"] .kmap-edge {
+  stroke: var(--neu-kmap-groove);
+  stroke-width: 2px;
+  stroke-linecap: round;
+  transition: opacity var(--neu-dur-release) var(--neu-ease-out);
+}
+
+:root[data-os="neumorph"] .kmap-edge[data-kind="tag"] {
+  stroke: var(--neu-kmap-groove-tag);
+  stroke-width: 2.6px;
+  stroke-dasharray: 0.1 6;
+}
+
+:root[data-os="neumorph"] .kmap-edge.is-near {
+  stroke: var(--neu-kmap-iris);
+  stroke-width: 2.6px;
+}
+
+:root[data-os="neumorph"] .kmap-edge.is-near[data-kind="tag"] {
+  stroke-width: 3.4px;
+}
+
+:root[data-os="neumorph"] .kmap-svg.has-focus .kmap-edge:not(.is-near) {
+  opacity: 0.3;
+}
+
+:root[data-os="neumorph"] .kmap-svg.has-focus .kmap-edge.is-filtered,
+:root[data-os="neumorph"] .kmap-edge.is-filtered {
+  opacity: 0.12;
+}
+
+/* Pearls. Each part is drawn round its node's origin (the g carries the position, so the g
+   itself never gets a CSS transform); the parts scale together by --neu-kmap-k, which every
+   state below sets on the node. */
+:root[data-os="neumorph"] .kmap-node {
+  transition: opacity var(--neu-dur-release) var(--neu-ease-out);
+}
+
+:root[data-os="neumorph"] .kmap-ring,
+:root[data-os="neumorph"] .kmap-dot {
+  transform-box: view-box;
+  transform-origin: 0 0;
+  transition: transform var(--neu-dur-release) var(--neu-ease-settle);
+}
+
+/* The socket the pearl sits in: a soft hollow of shade round its foot. */
+:root[data-os="neumorph"] .kmap-ring {
+  fill: var(--neu-kmap-socket);
+  stroke: none;
+  transform: scale(calc(var(--neu-kmap-k) * var(--neu-kmap-socket-k)));
+}
+
+/* The pearl: the stroke is the porcelain dome, the fill its category core; lit up-left. The
+   stroke scales with the map (vector-effect none) so dome and core keep their proportion. */
+:root[data-os="neumorph"] .kmap-dot {
+  fill: var(--neu-kmap-cat, var(--kmap-c7));
+  stroke: var(--neu-kmap-dome);
+  stroke-width: 2.6px;
+  vector-effect: none;
+  filter: var(--neu-kmap-pearl);
+  transform: scale(var(--neu-kmap-k));
+}
+
+/* The specular highlight. It rests up-left (the room light); fx/kmap.js leans it toward the
+   pointer (--neu-kmap-lx/-ly, -1..1) and brightens it (--neu-kmap-glint) for nearby pearls. */
+:root[data-os="neumorph"] .kmap-shine {
+  display: inline;
+  fill: var(--neu-kmap-shine);
+  opacity: calc(0.72 + var(--neu-kmap-glint) * 0.28);
+  pointer-events: none;
+  transform-box: view-box;
+  transform-origin: 0 0;
+  transform: scale(var(--neu-kmap-k)) translate(calc(var(--neu-kmap-lx) * var(--neu-kmap-lean)), calc(var(--neu-kmap-ly) * var(--neu-kmap-lean)));
+  transition: transform var(--neu-dur-release) var(--neu-ease-out);
+}
+
+/* States, lowest to highest priority (equal specificity, so source order decides). */
+/* Unrelated notes sink flush: they fade and lose their cast shadow (no scale change, so a
+   hover on a 150-note map restyles only the few pearls that move). */
+:root[data-os="neumorph"] .kmap-svg.has-focus .kmap-node:not(.is-near) {
+  opacity: 0.34;
+}
+
+:root[data-os="neumorph"] .kmap-svg.has-focus .kmap-node:not(.is-near) .kmap-dot {
+  filter: none;
+}
+
+:root[data-os="neumorph"] .kmap-svg.has-focus .kmap-node.is-near {
+  --neu-kmap-k: 1.32;
+}
+
+/* Neighbours rise one after another (fx/kmap.js sets --neu-kmap-nd by distance). */
+:root[data-os="neumorph"] .kmap-svg.has-focus .kmap-node.is-near .kmap-dot,
+:root[data-os="neumorph"] .kmap-svg.has-focus .kmap-node.is-near .kmap-ring {
+  transition-delay: var(--neu-kmap-nd);
+}
+
+/* A search or category filter: matches rise and glow, the rest sink flush with the floor. */
+:root[data-os="neumorph"] .kmap-svg:has(.kmap-node.is-filtered) .kmap-node:not(.is-filtered) {
+  --neu-kmap-k: 1.3;
+  --neu-kmap-socket-k: 1.16;
+}
+
+:root[data-os="neumorph"] .kmap-svg .kmap-node.is-filtered:not(.is-selected) {
+  opacity: 0.2;
+}
+
+:root[data-os="neumorph"] .kmap-svg .kmap-node.is-filtered:not(.is-selected) .kmap-dot {
+  filter: none;
+}
+
+@media (hover: hover) {
+  :root[data-os="neumorph"] .kmap-svg .kmap-node:hover:not(.is-filtered) {
+    --neu-kmap-k: 1.42;
+    --neu-kmap-socket-k: 1.14;
+  }
+}
+
+/* Press: the pearl gives, sinking into its socket (quick, like a key). */
+:root[data-os="neumorph"] .kmap-svg .kmap-node:active:not(.is-filtered) {
+  --neu-kmap-k: 1.08;
+  --neu-kmap-socket-k: 1.04;
+}
+
+:root[data-os="neumorph"] .kmap-svg .kmap-node:active .kmap-dot,
+:root[data-os="neumorph"] .kmap-svg .kmap-node:active .kmap-ring {
+  transition-duration: var(--neu-dur-press);
+  transition-timing-function: var(--neu-ease-press);
+}
+
+/* Selected: seated a little proud of its neighbours, ringed with iris light. */
+:root[data-os="neumorph"] .kmap-svg .kmap-node.is-selected:not(:active) {
+  --neu-kmap-k: 1.4;
+  --neu-kmap-socket-k: 1.22;
+  opacity: 1;
+}
+
+:root[data-os="neumorph"] .kmap-node.is-recent .kmap-ring {
+  stroke: var(--neu-kmap-recent);
+  stroke-width: 1.6px;
+  stroke-dasharray: none;
+}
+
+:root[data-os="neumorph"] .kmap-svg:has(.kmap-node.is-filtered) .kmap-node:not(.is-filtered) .kmap-ring {
+  fill: var(--neu-kmap-match);
+  stroke: var(--neu-kmap-recent);
+  stroke-width: 1.4px;
+  vector-effect: non-scaling-stroke;
+}
+
+:root[data-os="neumorph"] .kmap-node.is-selected .kmap-ring {
+  fill: var(--neu-kmap-iris-halo);
+  stroke: var(--neu-kmap-iris);
+  stroke-width: 2.6px;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Labels: ink on a soft plate of slightly lighter porcelain (painted under the glyphs), set
+   just clear of the largest pearl state. */
+:root[data-os="neumorph"] .kmap-label {
+  fill: var(--color-text);
+  font-weight: var(--font-weight-medium);
+  font-kerning: normal;
+  text-rendering: geometricPrecision;
+  paint-order: stroke fill;
+  stroke: var(--neu-kmap-label-plate);
+  stroke-width: 0.36em;
+  stroke-linejoin: round;
+  stroke-opacity: 1;
+  letter-spacing: normal;
+  transform: translateY(0.5em);
+}
+
+:root[data-os="neumorph"] .kmap-node.is-selected .kmap-label {
+  fill: var(--color-accent);
+  font-weight: var(--font-weight-strong);
+}
+
+/* Category colours: one private --neu-kmap-cat per slot, read by the core, the swatch and the
+   index keys' pips. */
+:root[data-os="neumorph"] .kmap-node[data-cat="0"],
+:root[data-os="neumorph"] .kmap-node[data-cat="0"] .kmap-dot,
+:root[data-os="neumorph"] .kmap-swatch[data-cat="0"],
+:root[data-os="neumorph"] .kmap-section:has(.kmap-swatch[data-cat="0"]) {
+  --neu-kmap-cat: var(--kmap-c0);
+}
+
+:root[data-os="neumorph"] .kmap-node[data-cat="1"],
+:root[data-os="neumorph"] .kmap-node[data-cat="1"] .kmap-dot,
+:root[data-os="neumorph"] .kmap-swatch[data-cat="1"],
+:root[data-os="neumorph"] .kmap-section:has(.kmap-swatch[data-cat="1"]) {
+  --neu-kmap-cat: var(--kmap-c1);
+}
+
+:root[data-os="neumorph"] .kmap-node[data-cat="2"],
+:root[data-os="neumorph"] .kmap-node[data-cat="2"] .kmap-dot,
+:root[data-os="neumorph"] .kmap-swatch[data-cat="2"],
+:root[data-os="neumorph"] .kmap-section:has(.kmap-swatch[data-cat="2"]) {
+  --neu-kmap-cat: var(--kmap-c2);
+}
+
+:root[data-os="neumorph"] .kmap-node[data-cat="3"],
+:root[data-os="neumorph"] .kmap-node[data-cat="3"] .kmap-dot,
+:root[data-os="neumorph"] .kmap-swatch[data-cat="3"],
+:root[data-os="neumorph"] .kmap-section:has(.kmap-swatch[data-cat="3"]) {
+  --neu-kmap-cat: var(--kmap-c3);
+}
+
+:root[data-os="neumorph"] .kmap-node[data-cat="4"],
+:root[data-os="neumorph"] .kmap-node[data-cat="4"] .kmap-dot,
+:root[data-os="neumorph"] .kmap-swatch[data-cat="4"],
+:root[data-os="neumorph"] .kmap-section:has(.kmap-swatch[data-cat="4"]) {
+  --neu-kmap-cat: var(--kmap-c4);
+}
+
+:root[data-os="neumorph"] .kmap-node[data-cat="5"],
+:root[data-os="neumorph"] .kmap-node[data-cat="5"] .kmap-dot,
+:root[data-os="neumorph"] .kmap-swatch[data-cat="5"],
+:root[data-os="neumorph"] .kmap-section:has(.kmap-swatch[data-cat="5"]) {
+  --neu-kmap-cat: var(--kmap-c5);
+}
+
+:root[data-os="neumorph"] .kmap-node[data-cat="6"],
+:root[data-os="neumorph"] .kmap-node[data-cat="6"] .kmap-dot,
+:root[data-os="neumorph"] .kmap-swatch[data-cat="6"],
+:root[data-os="neumorph"] .kmap-section:has(.kmap-swatch[data-cat="6"]) {
+  --neu-kmap-cat: var(--kmap-c6);
+}
+
+:root[data-os="neumorph"] .kmap-node[data-cat="7"],
+:root[data-os="neumorph"] .kmap-node[data-cat="7"] .kmap-dot,
+:root[data-os="neumorph"] .kmap-swatch[data-cat="7"],
+:root[data-os="neumorph"] .kmap-section:has(.kmap-swatch[data-cat="7"]) {
+  --neu-kmap-cat: var(--kmap-c7);
+}
+
+/* Swatches are little domed pearls of the category colour. */
+:root[data-os="neumorph"] .kmap-swatch {
+  width: 0.875rem;
+  height: 0.875rem;
+  border: 0;
+  border-radius: 50%;
+  background: var(--neu-kmap-gem), var(--neu-kmap-cat, var(--kmap-c7));
+  box-shadow: var(--neu-kmap-gem-shadow);
+}
+
+/* --- the index (List view; the whole map on phones): a well of soft keys by category --- */
+
+:root[data-os="neumorph"] .kmap-index {
+  padding: var(--space-4);
+  border: 0;
+  border-radius: var(--neu-radius-well);
+  background: var(--color-surface);
+  box-shadow: var(--neu-well-deep);
+}
+
+:root[data-os="neumorph"] .kmap-section + .kmap-section {
+  margin-top: var(--space-5);
+}
+
+:root[data-os="neumorph"] .kmap-section-title {
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-1);
+  font-weight: var(--font-weight-strong);
+  letter-spacing: var(--letter-spacing-heading);
+}
+
+:root[data-os="neumorph"] .kmap-count {
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--neu-well-xs);
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-medium);
+}
+
+:root[data-os="neumorph"] .kmap-entries {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
+  gap: var(--space-3);
+  padding: 2px;
+}
+
+:root[data-os="neumorph"] .kmap-entry-button {
+  position: relative;
+  padding: 0 var(--space-3) 0 calc(var(--space-3) + 16px);
+  border: 0;
+  border-radius: var(--neu-radius-key);
+  background: var(--neu-convex);
+  box-shadow: var(--neu-raise-xs);
+  color: var(--color-text);
+  font-weight: var(--font-weight-medium);
+  transition: box-shadow var(--neu-dur-release) var(--neu-ease-settle), transform var(--neu-dur-release) var(--neu-ease-settle);
+}
+
+/* A small domed pip in the note's category colour: the key is the pearl's twin. */
+:root[data-os="neumorph"] .kmap-entry-button::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: var(--space-3);
+  width: 9px;
+  height: 9px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: var(--neu-kmap-gem), var(--neu-kmap-cat, var(--kmap-c7));
+  box-shadow: var(--neu-kmap-gem-shadow);
+}
+
+:root[data-os="neumorph"] .kmap-entry-button:hover {
+  background: var(--neu-convex);
+  box-shadow: var(--neu-raise-xs-hover);
+  color: var(--color-accent);
+  transform: translateY(var(--neu-lift));
+}
+
+:root[data-os="neumorph"] .kmap-entry-button:active {
+  box-shadow: var(--neu-press-xs);
+  transform: translateY(var(--neu-press-depth));
+  transition-duration: var(--neu-dur-press);
+  transition-timing-function: var(--neu-ease-press);
+}
+
+:root[data-os="neumorph"] .kmap-entry.is-selected .kmap-entry-button {
+  background: var(--neu-concave);
+  box-shadow: var(--neu-press-xs), var(--neu-kmap-key-rim);
+  color: var(--color-accent);
+  font-weight: var(--font-weight-strong);
+  transform: none;
+}
+
+/* "Changed this week": a small sunken chip with a lit iris LED. */
+:root[data-os="neumorph"] .kmap-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--neu-well-xs);
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-medium);
+}
+
+:root[data-os="neumorph"] .kmap-new::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--neu-led);
+  box-shadow: var(--neu-led-glow);
+}
+
+:root[data-os="neumorph"] .kmap-entry-button:hover .kmap-new,
+:root[data-os="neumorph"] .kmap-entry.is-selected .kmap-new {
+  color: var(--color-text-muted);
+}
+
+/* --- the note: a raised reading slab --- */
+
+:root[data-os="neumorph"] .kmap-panel {
+  padding: var(--space-5);
+  border: 0;
+  border-radius: var(--neu-radius-panel);
+  background: var(--neu-slab);
+  box-shadow: var(--neu-raise-md);
+}
+
+/* No note open: a lone pearl resting on the slab, and one engraved line. */
+:root[data-os="neumorph"] .kmap-panel-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  min-height: 100%;
+  padding: var(--space-4) var(--space-2);
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-medium);
+  text-align: center;
+  text-shadow: var(--neu-engrave);
+}
+
+:root[data-os="neumorph"] .kmap-panel-hint::before {
+  content: "";
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--neu-kmap-gem), var(--neu-convex);
+  box-shadow: var(--neu-raise-sm);
+}
+
+:root[data-os="neumorph"] .kmap-panel-nav {
+  margin-bottom: var(--space-4);
+}
+
+:root[data-os="neumorph"] .kmap-panel > header {
+  margin-bottom: var(--space-4);
+  padding-bottom: var(--space-4);
+  border-bottom: var(--border-width) solid var(--neu-groove);
+  box-shadow: 0 1px 0 var(--neu-light);
+}
+
+:root[data-os="neumorph"] .kmap-note-title {
+  margin-bottom: var(--space-2);
+  font-weight: var(--font-weight-strong);
+  line-height: var(--line-height-tight);
+  letter-spacing: var(--letter-spacing-heading);
+}
+
+:root[data-os="neumorph"] .kmap-note-meta {
+  font-weight: var(--font-weight-medium);
+}
+
+:root[data-os="neumorph"] .kmap-tags {
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+/* Tags: embossed chips with an iris mark (fixed glyph, hidden from screen readers). */
+:root[data-os="neumorph"] .kmap-tag {
+  padding: 2px var(--space-3);
+  border: 0;
+  background: var(--neu-convex);
+  box-shadow: var(--neu-raise-xs);
+  color: var(--color-text);
+  font-weight: var(--font-weight-medium);
+}
+
+:root[data-os="neumorph"] .kmap-tag::before {
+  content: "#" / "";
+  margin-right: 1px;
+  color: var(--color-accent);
+  font-weight: var(--font-weight-strong);
+}
+
+:root[data-os="neumorph"] .kmap-note-body {
+  line-height: var(--line-height-body);
+}
+
+:root[data-os="neumorph"] .kmap-heading {
+  margin: var(--space-5) 0 var(--space-2);
+  font-weight: var(--font-weight-strong);
+  letter-spacing: var(--letter-spacing-heading);
+}
+
+:root[data-os="neumorph"] .kmap-list li::marker {
+  color: var(--color-accent);
+}
+
+/* Quotes and code sit in sunken wells cut into the slab. */
+:root[data-os="neumorph"] .kmap-quote {
+  margin-bottom: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--neu-press);
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-medium);
+}
+
+:root[data-os="neumorph"] .kmap-code {
+  margin-bottom: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--neu-press);
+  color: var(--color-text);
+}
+
+/* Links between notes: iris words over a soft iris groove (no browser underline); hover presses
+   a small capsule into the slab. Unknown notes get a dotted, muted groove. */
+:root[data-os="neumorph"] .kmap-link {
+  margin: 0 -3px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background-color: transparent;
+  background-image: linear-gradient(var(--neu-kmap-link-line), var(--neu-kmap-link-line));
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+  background-size: 100% 2px;
+  box-shadow: var(--neu-clear-press);
+  color: var(--color-accent);
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition: box-shadow var(--neu-dur-release) var(--neu-ease-out);
+}
+
+:root[data-os="neumorph"] .kmap-link:not(.is-missing):hover {
+  box-shadow: var(--neu-press-xs);
+  color: var(--color-accent-hover);
+}
+
+:root[data-os="neumorph"] .kmap-link:not(.is-missing):active {
+  box-shadow: var(--neu-press);
+  transition-duration: var(--neu-dur-press);
+}
+
+:root[data-os="neumorph"] .kmap-link.is-missing {
+  background-image: linear-gradient(90deg, var(--neu-kmap-link-line-missing) 50%, transparent 50%);
+  background-repeat: repeat-x;
+  background-size: 4px 2px;
+  color: var(--color-text-muted);
+}
+
+:root[data-os="neumorph"] .kmap-backlinks {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: var(--border-width) solid var(--neu-groove);
+  box-shadow: inset 0 1px 0 var(--neu-light);
+}
+
+:root[data-os="neumorph"] .kmap-backlinks-title {
+  margin-bottom: var(--space-3);
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-strong);
+}
+
+:root[data-os="neumorph"] .kmap-backlink-list {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* "Linked from" notes are soft keys. */
+:root[data-os="neumorph"] .kmap-backlink-list .kmap-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.25rem;
+  margin: 0;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--neu-convex);
+  box-shadow: var(--neu-raise-xs);
+  transition: box-shadow var(--neu-dur-release) var(--neu-ease-settle), transform var(--neu-dur-release) var(--neu-ease-settle);
+}
+
+:root[data-os="neumorph"] .kmap-backlink-list .kmap-link:hover {
+  box-shadow: var(--neu-raise-xs-hover);
+  transform: translateY(var(--neu-lift));
+}
+
+:root[data-os="neumorph"] .kmap-backlink-list .kmap-link:active {
+  box-shadow: var(--neu-press-xs);
+  transform: translateY(var(--neu-press-depth));
+  transition-duration: var(--neu-dur-press);
+  transition-timing-function: var(--neu-ease-press);
+}
+
+/* --- status bar: the zoom keys sit in one sunken track, like Map / List --- */
+
+:root[data-os="neumorph"] .kmap-statusbar {
+  gap: var(--space-3);
+}
+
+:root[data-os="neumorph"] .kmap-zooms {
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--radius-pill);
+  box-shadow: var(--neu-well-xs);
+}
+
+:root[data-os="neumorph"] .kmap-zoom {
+  min-height: 36px;
+  border-radius: var(--radius-pill);
+  font-weight: var(--font-weight-strong);
+}
+
+/* --- approvals: a control panel. Each request sits in its own sunken bay; the title carries a
+   status LED (unlit = nothing waiting; amber = waiting for you, or the list can't be checked;
+   iris = the code entry is open). Text is never clipped: the owner compares it with the phone. --- */
+
+:root[data-os="neumorph"] .kmap-approvals {
+  margin: var(--space-4) 0 var(--space-5);
+  padding: var(--space-4) var(--space-5) var(--space-4);
+  border: 0;
+  border-radius: var(--neu-radius-panel);
+  background: var(--neu-slab);
+  box-shadow: var(--neu-raise-md);
+}
+
+:root[data-os="neumorph"] .kmap-approvals .group-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 0 var(--space-3);
+}
+
+:root[data-os="neumorph"] .kmap-approvals .group-title::before {
+  content: "";
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  box-shadow: var(--neu-press-xs);
+}
+
+:root[data-os="neumorph"] .kmap-approvals:has(.kmap-approval) .group-title::before,
+:root[data-os="neumorph"] .kmap-approvals:has(.kmap-approvals-none + .kmap-approvals-note) .group-title::before {
+  background: var(--neu-led-warn);
+  box-shadow: var(--neu-led-warn-glow);
+}
+
+:root[data-os="neumorph"] .kmap-approvals:has(.kmap-approval-code:not([hidden])) .group-title::before {
+  background: var(--neu-led);
+  box-shadow: var(--neu-led-glow);
+}
+
+:root[data-os="neumorph"] .kmap-approval-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+:root[data-os="neumorph"] .kmap-approval {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--neu-well);
+}
+
+:root[data-os="neumorph"] .kmap-approval-text {
+  color: var(--color-text);
+  font-size: var(--font-size-lg);
+}
+
+:root[data-os="neumorph"] .kmap-approval-id {
+  padding: 0 6px;
+  border-radius: 6px;
+  box-shadow: var(--neu-well-xs);
+  color: var(--color-text);
+}
+
+:root[data-os="neumorph"] .kmap-approvals-none {
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-medium);
+  text-shadow: var(--neu-engrave);
+}
+
+:root[data-os="neumorph"] .kmap-approvals-note {
+  margin-top: var(--space-3);
+}
+
+/* "Can't be checked, approve nothing": the fail-closed warning reads as one (6.1:1). */
+:root[data-os="neumorph"] .kmap-approvals-none + .kmap-approvals-note {
+  color: var(--color-warning-text);
+  font-weight: var(--font-weight-medium);
+}
+
+:root[data-os="neumorph"] .kmap-approval-actions {
+  justify-content: flex-start;
+  margin-top: var(--space-2);
+}
+
+/* Deny is the quiet key: surface with red words; Approve stays the iris key. */
+:root[data-os="neumorph"] .kmap-approval-actions .button:not(.button-primary) {
+  color: var(--color-danger);
+}
+
+/* While the code is checked the Approve key stays pressed in, still iris and legible. */
+:root[data-os="neumorph"] .kmap-approval .button-primary:disabled {
+  background: var(--neu-accent-concave);
+  box-shadow: var(--neu-accent-press);
+  color: var(--color-accent-contrast);
+}
+
+/* The code entry: a small raised plate in the bay. */
+:root[data-os="neumorph"] .kmap-approval-code {
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--neu-convex);
+  box-shadow: var(--neu-raise-xs);
+}
+
+:root[data-os="neumorph"] .kmap-code-row {
+  gap: var(--space-3);
+}
+
+/* Six sunken digit cells: monospace digits spaced one per cell, engraved dividers between
+   them (the one input stays one input: paste and one-time-code autofill keep working). */
+:root[data-os="neumorph"] .kmap-code-input {
+  box-sizing: content-box;
+  width: calc(var(--neu-kmap-cell) * 6);
+  min-height: var(--tap-target);
+  padding: 0 0 0 calc(var(--neu-kmap-cell-gap) / 2);
+  border-radius: var(--radius-md);
+  background-image: repeating-linear-gradient(90deg, transparent 0 calc(var(--neu-kmap-cell) - 2px), var(--neu-kmap-cell-shade) calc(var(--neu-kmap-cell) - 2px) calc(var(--neu-kmap-cell) - 1px), var(--neu-kmap-cell-light) calc(var(--neu-kmap-cell) - 1px) var(--neu-kmap-cell));
+  background-position: 0 50%;
+  background-repeat: no-repeat;
+  background-size: calc(var(--neu-kmap-cell) * 5) 55%;
+  font-size: 1.375rem;
+  font-weight: var(--font-weight-strong);
+  letter-spacing: var(--neu-kmap-cell-gap);
+  text-align: left;
+}
+
+:root[data-os="neumorph"] .kmap-approval-status {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--neu-well-xs);
+  color: var(--color-text);
+  font-weight: var(--font-weight-medium);
+}
+
+:root[data-os="neumorph"] .kmap-approval-status:empty {
+  display: none;
+}
+
+/* Wide windows: the request on the left, its keys on the right of the bay. */
+@media (min-width: 60rem) {
+  /* Four text rows, then a flexible one that takes any extra height of the keys' column (so the
+     text lines stay together however tall the code plate is). */
+  :root[data-os="neumorph"] .kmap-approval {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: repeat(4, auto) 1fr;
+  }
+
+  :root[data-os="neumorph"] .kmap-approval > span {
+    grid-column: 1;
+  }
+
+  :root[data-os="neumorph"] .kmap-approval-actions,
+  :root[data-os="neumorph"] .kmap-approval-code {
+    grid-column: 2;
+    grid-row: 1 / span 5;
+    align-self: center;
+    margin-top: 0;
+  }
+
+  :root[data-os="neumorph"] .kmap-approval-status {
+    grid-row: 6;
+    grid-column: 1 / -1;
+  }
+}
+
+/* --- the background set (os/neumorph/backgrounds.js): relief on the one surface --- */
+
+:root[data-os="neumorph"] body[data-background="porcelain"] {
+  background-color: var(--color-bg);
+  background-image: var(--desktop-pattern);
+  background-size: 100% 100%;
+}
+
+/* Dunes: long soft ridges, each a lit crest with its shade just below. */
+:root[data-os="neumorph"] body[data-background="dunes"] {
+  background-color: var(--color-bg);
+  background-image:
+    radial-gradient(ellipse 140% 60% at 15% 120%, transparent 58%, var(--neu-relief-shade) 60.5%, var(--neu-relief-light) 61.5%, transparent 65%),
+    radial-gradient(ellipse 140% 60% at 15% 120%, transparent 70%, var(--neu-relief-shade-soft) 72.5%, var(--neu-relief-light-soft) 73.5%, transparent 77%),
+    radial-gradient(ellipse 120% 55% at 95% -15%, transparent 55%, var(--neu-relief-light) 57.5%, var(--neu-relief-shade) 58.5%, transparent 62%),
+    radial-gradient(ellipse 120% 55% at 95% -15%, transparent 67%, var(--neu-relief-light-soft) 69.5%, var(--neu-relief-shade-soft) 70.5%, transparent 74%),
+    var(--desktop-pattern);
+  background-size: 100% 100%;
+}
+
+/* Pillows: a grid of small cushions, each lit top-left and shaded bottom-right. */
+:root[data-os="neumorph"] body[data-background="pillows"] {
+  background-color: var(--color-bg);
+  background-image:
+    radial-gradient(circle at 50% 50%, var(--neu-orb-hi) 0, var(--color-bg) 11px, transparent 12px),
+    radial-gradient(circle at calc(50% + 3px) calc(50% + 3px), var(--neu-relief-shade) 0 9px, transparent 15px),
+    radial-gradient(circle at calc(50% - 3px) calc(50% - 3px), var(--neu-relief-light) 0 8px, transparent 13px);
+  background-size: 48px 48px;
+}
+
+/* Rings: grooves cut in concentric circles around a centre high on the right. */
+:root[data-os="neumorph"] body[data-background="rings"] {
+  background-color: var(--color-bg);
+  background-image:
+    repeating-radial-gradient(circle at 82% 18%, transparent 0 60px, var(--neu-relief-shade-soft) 61px 62px, var(--neu-relief-light-soft) 63px 64px, transparent 65px 72px),
+    var(--desktop-pattern);
+  background-size: 100% 100%;
+}
+
+/* Orb: one large raised dome of the surface. Its face is a radial gradient lit off-centre
+   toward the top-left and rolling into shade at the lower-right rim; behind it a light halo
+   up-left and a cast shade down-right lift it off the desk. */
+:root[data-os="neumorph"] body[data-background="orb"] {
+  background-color: var(--color-bg);
+  background-image:
+    radial-gradient(circle 17vmax at calc(78% - 8vmax) calc(32% - 8vmax), var(--neu-orb-sheen) 0, transparent 100%),
+    radial-gradient(circle 30vmax at 78% 32%, var(--neu-orb-hi) 0, var(--color-bg) 58%, var(--neu-orb-lo) calc(100% - 1px), transparent 100%),
+    radial-gradient(circle 32vmax at calc(78% - 2.4vmax) calc(32% - 2.4vmax), var(--neu-orb-glow) 29vmax, transparent 100%),
+    radial-gradient(circle 35vmax at calc(78% + 3vmax) calc(32% + 3vmax), var(--neu-orb-cast) 27vmax, transparent 100%),
+    var(--desktop-pattern);
+  background-size: 100% 100%;
+}
+
+/* --- phones (< 37.5rem): one row of 44px keys; the clock and app name hide --- */
+
+@media (max-width: 37.49rem) {
+  :root[data-os="neumorph"] .shell-bar {
+    gap: var(--space-1);
+    margin: var(--space-2) 6px 0;
+    padding: 0 var(--space-1);
+    top: var(--space-2);
+    border-radius: 22px;
+  }
+
+  :root[data-os="neumorph"] .shell-app {
+    gap: 0;
+    padding: 0;
+  }
+
+  :root[data-os="neumorph"] .shell-app::before {
+    width: 36px;
+    height: 36px;
+  }
+
+  :root[data-os="neumorph"] .shell-app::after {
+    left: 13px;
+  }
+
+  :root[data-os="neumorph"] .shell-bar .desk-icons {
+    gap: var(--space-1);
+  }
+
+  :root[data-os="neumorph"] .shell-bar .desk-icon,
+  :root[data-os="neumorph"] .shell-link,
+  :root[data-os="neumorph"] .shell-menu-trigger {
+    min-height: var(--tap-target);
+    padding: 0 10px;
+    gap: 6px;
+  }
+
+  :root[data-os="neumorph"] .shell-bar .desk-icon[data-count-value]::after {
+    min-width: 18px;
+    height: 20px;
+    padding: 0 4px;
+    line-height: 20px;
+  }
+
+  :root[data-os="neumorph"] .shell-link {
+    width: var(--tap-target);
+    padding: 0;
+  }
+
+  :root[data-os="neumorph"] .shell-clock {
+    display: none;
+  }
+
+  /* The label stays the accessible name; a tiny relief disc shows instead. */
+  :root[data-os="neumorph"] .shell-menu-trigger[data-shell-trigger="background"] {
+    width: var(--tap-target);
+    padding: 0;
+    justify-content: center;
+    font-size: 0;
+  }
+
+  :root[data-os="neumorph"] .shell-menu-trigger[data-shell-trigger="background"]::after {
+    content: "";
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--neu-convex);
+    box-shadow: var(--neu-raise-xs), inset 0 0 0 2px var(--color-accent);
+  }
+
+  :root[data-os="neumorph"] .desktop {
+    padding-top: var(--space-4);
+  }
+
+  :root[data-os="neumorph"] .window {
+    border-radius: 24px;
+  }
+
+  :root[data-os="neumorph"] .titlebar {
+    padding: var(--space-2) var(--space-3) 0;
+  }
+
+  :root[data-os="neumorph"] .window-body {
+    padding: var(--space-2) var(--space-2) var(--space-3);
+  }
+
+  :root[data-os="neumorph"] .inset:not(.kmap-index) {
+    padding: var(--space-1);
+  }
+
+  /* Version: the popup and its button wrap onto two lines here; the label lines up with the
+     first (the popup's text), not the middle of the pair. */
+  :root[data-os="neumorph"] .version-switcher dt {
+    align-self: start;
+    padding-top: calc((var(--tap-target) - 1lh) / 2);
+  }
+
+  /* Icon-only here: the pressed key also gets an accent rim, so "current" never rests on shadow. */
+  :root[data-os="neumorph"] .shell-link[aria-current="page"] {
+    box-shadow: var(--neu-press), inset 0 0 0 2px var(--color-accent);
+  }
+}
+
+/* --- wider screens: the bar floats, inset from the screen edges, with the app name --- */
+
+@media (min-width: 37.5rem) {
+  /* List icons read at a 32px tile; the negative margin keeps the row height. */
+  :root[data-os="neumorph"] .cell-name > .icon {
+    width: 40px;
+    height: 40px;
+    margin-block: -4px;
+  }
+
+  :root[data-os="neumorph"] .shell-bar {
+    top: var(--space-3);
+    margin: var(--space-3) var(--space-4) 0;
+    padding: 0 var(--space-3);
+    border-radius: 26px;
+  }
+
+  :root[data-os="neumorph"] .shell-app {
+    margin-right: var(--space-3);
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-strong);
+    letter-spacing: var(--letter-spacing-heading);
+  }
+
+  :root[data-os="neumorph"] .desktop {
+    padding-top: var(--space-6);
+  }
+}
+
+/* === N2: icon art (icons.js) ===================================================================
+   Deliberately unscoped: <use> clones these shapes into a shadow tree where a :root[data-os]
+   ancestor selector never matches (test_neumorph_icons.py). The classes only exist while this
+   OS has swapped its art into the sprite, and they are OS-prefixed, so nothing leaks. Colours
+   come from the --neu-ic-* tokens, which inherit into the shadow tree. */
+
+.neumorph-ic-shade {
+  fill: var(--neu-ic-shade);
+}
+
+.neumorph-ic-light {
+  fill: var(--neu-ic-light);
+}
+
+.neumorph-ic-face {
+  fill: var(--neu-ic-face);
+}
+
+.neumorph-ic-back {
+  fill: var(--neu-ic-back);
+}
+
+.neumorph-ic-paper {
+  fill: var(--neu-ic-paper);
+}
+
+.neumorph-ic-sheen {
+  fill: var(--neu-ic-sheen);
+}
+
+.neumorph-ic-shine {
+  fill: var(--neu-ic-shine);
+}
+
+.neumorph-ic-ink {
+  fill: var(--neu-ic-ink);
+}
+
+.neumorph-ic-iris {
+  fill: var(--neu-ic-iris);
+}
+
+.neumorph-ic-muted {
+  fill: var(--neu-ic-muted);
+}
+
+.neumorph-ic-warn {
+  fill: var(--neu-ic-warn);
+}
+
+.neumorph-ic-lift {
+  fill: var(--neu-ic-lift);
+}
+
+.neumorph-ic-drop {
+  fill: var(--neu-ic-drop);
+}
+
+.neumorph-ic-pearl-iris {
+  fill: var(--kmap-c0);
+}
+
+.neumorph-ic-pearl-teal {
+  fill: var(--kmap-c1);
+}
+
+.neumorph-ic-pearl-amber {
+  fill: var(--kmap-c2);
+}
+
+.neumorph-ic-ink-s,
+.neumorph-ic-iris-s,
+.neumorph-ic-muted-s,
+.neumorph-ic-warn-s,
+.neumorph-ic-white-s,
+.neumorph-ic-lift-s,
+.neumorph-ic-drop-s,
+.neumorph-ic-groove-s,
+.neumorph-ic-track-s {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.neumorph-ic-ink-s {
+  stroke: var(--neu-ic-ink);
+}
+
+.neumorph-ic-iris-s {
+  stroke: var(--neu-ic-iris);
+}
+
+.neumorph-ic-muted-s {
+  stroke: var(--neu-ic-muted);
+}
+
+.neumorph-ic-warn-s {
+  stroke: var(--neu-ic-warn);
+}
+
+.neumorph-ic-white-s {
+  stroke: var(--neu-ic-white);
+}
+
+.neumorph-ic-lift-s {
+  stroke: var(--neu-ic-lift);
+}
+
+.neumorph-ic-drop-s {
+  stroke: var(--neu-ic-drop);
+}
+
+.neumorph-ic-groove-s {
+  stroke: var(--neu-ic-groove);
+}
+
+.neumorph-ic-track-s {
+  stroke: var(--neu-ic-track);
+}
+
+/* --- reduced motion: keys still change state, instantly (fx/fx.css covers the fx motion) --- */
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-os="neumorph"] .shell-bar .desk-icon,
+  :root[data-os="neumorph"] .shell-link,
+  :root[data-os="neumorph"] .shell-menu-trigger,
+  :root[data-os="neumorph"] .shell-menu-option,
+  :root[data-os="neumorph"] .titlebar-close::before,
+  :root[data-os="neumorph"] .row::before,
+  :root[data-os="neumorph"] .row::after,
+  :root[data-os="neumorph"] .row-more::before,
+  :root[data-os="neumorph"] .button,
+  :root[data-os="neumorph"] .stage-close,
+  :root[data-os="neumorph"] .file-action,
+  :root[data-os="neumorph"] .select,
+  :root[data-os="neumorph"] .ctx-menu-item,
+  :root[data-os="neumorph"] .kmap-edge,
+  :root[data-os="neumorph"] .kmap-node,
+  :root[data-os="neumorph"] .kmap-ring,
+  :root[data-os="neumorph"] .kmap-dot,
+  :root[data-os="neumorph"] .kmap-shine,
+  :root[data-os="neumorph"] .kmap-entry-button,
+  :root[data-os="neumorph"] .kmap-link,
+  :root[data-os="neumorph"] .kmap-backlink-list .kmap-link {
+    transition: none;
+  }
+}

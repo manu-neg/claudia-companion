@@ -57,6 +57,8 @@ GARDENER_TIMER = SYSTEMD_DIR / "claudia-gardener.timer"
 CLAUDIA_SETTINGS = DEPLOY_DIR / "claudia" / "settings.json"
 CLAUDIA_MCP_TEMPLATE = DEPLOY_DIR / "claudia" / "mcp.json.in"
 VOICE_PINS = DEPLOY_DIR / "claudia" / "voices.sha256"
+WHISPER_PINS = DEPLOY_DIR / "claudia" / "whisper.sha256"
+WHISPER_BUILD_REQS = DEPLOY_DIR / "claudia" / "whisper-build-requirements.txt"
 ALL_SYSTEMD_FILES = (
     ADMIN_UNIT,
     VIEWER_UNIT,
@@ -129,6 +131,8 @@ def directives(path: Path) -> set[str]:
         GARDENER_TIMER,
         CLAUDIA_MCP_TEMPLATE,
         VOICE_PINS,
+        WHISPER_PINS,
+        WHISPER_BUILD_REQS,
     ],
 )
 def test_every_artifact_has_a_file_header_comment(path: Path) -> None:
@@ -158,10 +162,12 @@ def test_admin_unit_identity_and_socket_peer_policy() -> None:
     # --token-group notifier=pdash-notifytok" as separate words (ADR 0023).
     # ${PDASH_VIEWER_UID}, BRACED: exactly one word, "" when unset -> exit 2 (ADR 0025).
     # $PDASH_CLAUDIA_ADMIN_ARGS (M9, ADR 0036) follows the notifier's pattern.
+    # --viewer-peer-uid ${PDASH_VIEWER_UID} (F-CL6, ADR 0043): braced, same file.
     assert exec_start.endswith(
         "/opt/preview-dashboard/.venv/bin/preview-dashboard serve-admin "
         "--allowed-peer-uid 0 --trusted-sidecar-uid ${PDASH_VIEWER_UID} "
-        "--token-group admin=pdash $PDASH_NOTIFIER_ADMIN_ARGS $PDASH_CLAUDIA_ADMIN_ARGS"
+        "--token-group admin=pdash --viewer-peer-uid ${PDASH_VIEWER_UID} "
+        "--token-group viewer=pdash-viewtok $PDASH_NOTIFIER_ADMIN_ARGS $PDASH_CLAUDIA_ADMIN_ARGS"
     )
 
 
@@ -190,6 +196,8 @@ def systemd_expand(exec_line: str, env: dict[str, str]) -> list[str]:
 
 
 _VIEWER_ENV = {"PDASH_VIEWER_UID": "997"}  # viewer-uid.env (always written, ADR 0025)
+# Static in the admin unit: its own token, then viewer.token's group (F-CL6).
+_BASE_GROUPS = ("admin=pdash", "viewer=pdash-viewtok")
 
 
 def _env_file_line(uid: str) -> dict[str, str]:
@@ -212,9 +220,9 @@ def test_install_sh_writes_the_env_file_line_the_simulation_uses() -> None:
 @pytest.mark.parametrize(
     ("env", "notifier_uids", "token_groups"),
     [
-        (_VIEWER_ENV, None, ["admin=pdash"]),  # no notifier env file: unset
-        ({"PDASH_NOTIFIER_ADMIN_ARGS": "", **_VIEWER_ENV}, None, ["admin=pdash"]),  # empty
-        (_env_file_line("998"), [998], ["admin=pdash", "notifier=pdash-notifytok"]),
+        (_VIEWER_ENV, None, [*_BASE_GROUPS]),  # no notifier env file: unset
+        ({"PDASH_NOTIFIER_ADMIN_ARGS": "", **_VIEWER_ENV}, None, [*_BASE_GROUPS]),  # empty
+        (_env_file_line("998"), [998], [*_BASE_GROUPS, "notifier=pdash-notifytok"]),
     ],
 )
 def test_admin_execstart_expands_to_argv_serve_admin_accepts(
@@ -228,6 +236,7 @@ def test_admin_execstart_expands_to_argv_serve_admin_accepts(
     assert args.allowed_peer_uid == [0]
     assert args.trusted_sidecar_uid == [997]
     assert args.notifier_peer_uid == notifier_uids
+    assert args.viewer_peer_uid == [997]  # pdash-viewer only, from viewer-uid.env
     assert args.token_group == token_groups
     # Every value is the scoped KIND=GROUP form with a real token kind (ADR 0024),
     # or the TOTP secret's own group (totp=, S-C1 S2).
@@ -501,14 +510,25 @@ def test_admin_has_full_read_write_on_data_dir() -> None:
     assert unit[("Service", "ReadWritePaths")] == ["/var/lib/preview-dashboard"]
 
 
-def test_viewer_cannot_reach_the_admin_socket_directory() -> None:
-    """Unit 12 audit, L1: /run/preview-dashboard is the *admin* service's own
-    RuntimeDirectory (holds admin.sock); the viewer has no admin API client
-    and no legitimate reason to reach it, so it is masked too, even though
-    ProtectSystem=strict alone does not hide /run."""
+def test_viewer_reaches_the_admin_socket_with_its_scoped_token_only() -> None:
+    """The static viewer unit keeps unit 12's L1 mask on /run/preview-dashboard;
+    only the Claudia drop-in (F-CL6, ADR 0043) lifts it, so the viewer's one
+    admin client posts dashboard Approve/Deny there on Claudia hosts only. The
+    scope is the admin's: viewer.token (its own group, scoped KIND=GROUP) from
+    the viewer's uid only. admin.token, /root and /home stay masked."""
     unit = parse_unit(VIEWER_UNIT)
-    inaccessible = unit[("Service", "InaccessiblePaths")]
-    assert any("/run/preview-dashboard" in v for v in inaccessible)
+    inaccessible = " ".join(unit[("Service", "InaccessiblePaths")]).split()
+    assert "/run/preview-dashboard" in inaccessible
+    assert {"/root", "/home", "/etc/preview-dashboard/admin.token"} <= set(inaccessible)
+    (exec_start,) = unit[("Service", "ExecStart")]
+    assert exec_start.endswith(
+        "serve-viewer --trusted-owner-uid ${PDASH_ADMIN_UID} --token-group viewer=pdash-viewtok"
+    )
+    args = build_parser().parse_args(systemd_expand(exec_start, {"PDASH_ADMIN_UID": "996"})[1:])
+    assert args.token_group == ["viewer=pdash-viewtok"]
+    # The admin admits that uid on /v1/viewer/* only (PeerPolicyMiddleware).
+    (admin_exec,) = parse_unit(ADMIN_UNIT)[("Service", "ExecStart")]
+    assert "--viewer-peer-uid ${PDASH_VIEWER_UID}" in admin_exec
 
 
 @pytest.mark.parametrize("unit_path", ALL_SERVICE_FILES_INCL_NOTIFIER)
@@ -1893,8 +1913,10 @@ def test_c45_c47_admin_execstart_with_claudia_args_is_accepted() -> None:
     args = build_parser().parse_args(argv[1:])
     assert args.claudia_peer_uid == [0]
     assert args.notifier_peer_uid == [998]
+    assert args.viewer_peer_uid == [997]
     assert args.token_group == [
         "admin=pdash",
+        "viewer=pdash-viewtok",
         "notifier=pdash-notifytok",
         "claudia=pdash-claudiatok",
         "totp=pdash-totp",
@@ -2018,7 +2040,8 @@ def test_c54_gardener_timer_is_weekly_and_persistent() -> None:
 
 def test_c57_viewer_reads_the_kb_only_and_masks_claudia_secrets() -> None:
     unit = parse_unit(VIEWER_UNIT)
-    assert unit[("Service", "SupplementaryGroups")] == ["pdash-kb"]
+    # pdash-viewtok: viewer.token only (F-CL6, C46); nothing else is added.
+    assert unit[("Service", "SupplementaryGroups")] == ["pdash-kb pdash-viewtok"]
     assert "-/var/lib/claudia-kb" in unit[("Service", "ReadOnlyPaths")]
     assert not any("claudia" in v for v in unit[("Service", "ReadWritePaths")])
     masked = " ".join(unit[("Service", "InaccessiblePaths")]).split()
@@ -2287,6 +2310,175 @@ def test_voice_models_need_claudia(tmp_path: Path) -> None:
     assert "--voice-models needs --claudia" in result.stderr
 
 
+# --- F-CL4 C: whisper.cpp install (C62, ADR 0042) -------------------------------------
+
+
+def test_whisper_pins_are_well_formed_and_exact() -> None:
+    """The repo file pins exactly the tarball and the model (binary hash is install-time)."""
+    pin_lines = [
+        line for line in WHISPER_PINS.read_text().splitlines() if line and not line.startswith("#")
+    ]
+    assert all(re.fullmatch(r"[0-9a-f]{64}  (tarball|model)", line) for line in pin_lines)
+    assert pin_lines == [
+        "ff1a9053feb509ff9d7729703355541ae9690073a6b1c40eb692c962e0dc1720  tarball",
+        "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe  model",
+    ]
+
+
+def test_whisper_install_urls_match_the_pinned_release() -> None:
+    text = INSTALL_SH.read_text()
+    assert (
+        'WHISPER_TARBALL_URL="https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.9.5.tar.gz"'
+        in text
+    )
+    assert (
+        'WHISPER_MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"'
+        in text
+    )
+
+
+def test_whisper_hashes_are_verified_before_the_tarball_is_extracted() -> None:
+    """Fail closed: both sha256 checks sit before `tar -x`, which sits before the build."""
+    text = INSTALL_SH.read_text()
+    body = text[text.index("install_whisper() {") :]
+    tar_pos = body.index('\n    tar -xzf "$work/whisper.tar.gz"')
+    assert body.index('verify_sha256 "$work/whisper.tar.gz"') < tar_pos
+    assert body.index('verify_sha256 "$work/ggml-base.bin"') < tar_pos
+    assert tar_pos < body.index('"$work/tools/bin/cmake" -S')
+
+
+def test_whisper_build_flags_and_tools_are_pinned_and_cpu_only() -> None:
+    text = INSTALL_SH.read_text()
+    for flag in (
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DGGML_NATIVE=OFF",
+        "-DBUILD_SHARED_LIBS=OFF",
+        "-DWHISPER_BUILD_TESTS=OFF",
+        "-DWHISPER_BUILD_SERVER=OFF",
+        "--target whisper-cli",
+    ):
+        assert flag in text, flag
+    assert "GGML_CUDA" not in text
+    # No package manager anywhere in the new path (also see the apt guard test).
+    assert not re.search(r"^\s*(run\s+)?(apt|apt-get|dpkg|snap)\s", text, re.MULTILINE)
+
+
+def test_whisper_build_tools_are_hash_pinned_and_hashes_are_enforced() -> None:
+    """cmake and ninja: exact versions, every wheel hashed, installed with --require-hashes."""
+    reqs = WHISPER_BUILD_REQS.read_text()
+    hash_lines = r"((?:\s+--hash=sha256:[0-9a-f]{64}\s*\\?\n?)+)"
+    pins = re.findall(rf"^(cmake|ninja)==([\d.]+) \\\n{hash_lines}", reqs, re.M)
+    assert {name: version for name, version, _h in pins} == {
+        "cmake": "3.31.6",
+        "ninja": "1.11.1.4",
+    }
+    for name, _version, hashes in pins:
+        assert hashes.count("--hash=sha256:") >= 1, name
+    # Every requirement line is pinned with hashes; no sdist, no unpinned extra.
+    entries = [ln for ln in reqs.splitlines() if ln and not ln.startswith(("#", " "))]
+    assert len(entries) == 2 and all("==" in ln for ln in entries)
+    text = INSTALL_SH.read_text()
+    body = text[text.index("install_whisper() {") :]
+    # `uv run --with-requirements` ignores --hash, so the venv + pip route is the check.
+    assert "--require-hashes --no-deps --only-binary :all:" in body
+    assert '-r "$WHISPER_BUILD_REQS"' in body
+    assert "uv run" not in body.split("\n}\n")[0] and "$UV_BIN run" not in body.split("\n}\n")[0]
+    assert body.index("--require-hashes") < body.index('"$work/tools/bin/cmake" -S')
+
+
+def test_whisper_dry_run_builds_with_the_hash_pinned_tools(tmp_path: Path) -> None:
+    result = run_install_dry_run(tmp_path / "p", *_CLAUDIA_ARGS, "--whisper")
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    assert "pip install --python <temp dir>/tools/bin/python --require-hashes" in out
+    assert "whisper-build-requirements.txt" in out
+    assert out.index("--require-hashes") < out.index("<temp dir>/tools/bin/cmake -S")
+
+
+def test_whisper_implies_the_voice_extra(tmp_path: Path) -> None:
+    """Voice-note decoding needs soundfile/numpy: --whisper installs the claudia-voice extra."""
+    with_whisper = run_install_dry_run(tmp_path / "w", *_CLAUDIA_ARGS, "--whisper")
+    assert with_whisper.returncode == 0, with_whisper.stderr
+    assert "sync --frozen --no-dev --extra claudia-voice" in with_whisper.stdout
+    # It does not demand Piper voices (no voice model is installed or checked).
+    assert "voice models (pinned SHA-256" not in with_whisper.stdout
+    without = run_install_dry_run(tmp_path / "n", *_CLAUDIA_ARGS)
+    assert without.returncode == 0, without.stderr
+    assert "--extra claudia-voice" not in without.stdout
+
+
+def test_whisper_flag_needs_claudia(tmp_path: Path) -> None:
+    result = run_install_dry_run(tmp_path, *_TELEGRAM_ARGS, "--whisper")
+    assert result.returncode == 2
+    assert "--whisper needs --claudia" in result.stderr
+
+
+def test_whisper_refused_until_both_inputs_are_pinned(tmp_path: Path) -> None:
+    deploy_copy = _deploy_copy(tmp_path)
+    (deploy_copy / "claudia" / "whisper.sha256").write_text("# no pins\n")
+    result = run_install_dry_run(
+        tmp_path / "p", *_CLAUDIA_ARGS, "--whisper", install_sh=deploy_copy / "install.sh"
+    )
+    assert result.returncode == 2
+    assert "not both pinned" in result.stderr
+    assert _actions(result.stdout) == []
+
+
+def test_whisper_dry_run_installs_the_fixed_paths_and_never_touches_config(
+    tmp_path: Path,
+) -> None:
+    result = run_install_dry_run(tmp_path / "p", *_CLAUDIA_ARGS, "--whisper")
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    root = f"{tmp_path}/p/opt/claudia-whisper"
+    assert (
+        f"install -m 0755 -o root -g root <temp dir>/build/bin/whisper-cli {root}/bin/whisper-cli"
+        in out
+    )
+    assert f"{root}/models/ggml-base.bin" in out
+    assert f"write {root}/whisper.sha256 (mode 0644, owner root:root" in out
+    assert out.index("sha256sum check of both downloads") < out.index("tar -xzf")
+    # The live config is only ever read/created by the existing steps, never edited for whisper.
+    assert "claudia_voice_input_enabled" not in out
+
+
+def test_whisper_does_nothing_without_the_flag(tmp_path: Path) -> None:
+    result = run_install_dry_run(tmp_path / "p", *_CLAUDIA_ARGS)
+    assert result.returncode == 0, result.stderr
+    assert "claudia-whisper" not in result.stdout
+    assert "whisper.sha256" not in result.stdout
+    assert not (tmp_path / "p" / "opt" / "claudia-whisper").exists()
+
+
+def test_config_example_has_the_media_keys() -> None:
+    text = CONFIG_EXAMPLE.read_text()
+    data = tomllib.loads(text)
+    # Owner decision 2026-11-09: both inputs on by default (with claudia_enabled).
+    assert data["claudia_voice_input_enabled"] is True
+    assert data["claudia_photo_input_enabled"] is True
+    assert data["claudia_photo_turn_tools"] == "read_only"
+    assert '\n# claudia_whisper_dir = "/opt/claudia-whisper"' in text
+
+
+def test_check_sh_verifies_whisper_pins_and_warns_on_switches() -> None:
+    text = CHECK_SH.read_text()
+    assert "check_media_input" in text
+    assert "/opt/claudia-whisper" in text
+    assert 'warn "claudia_voice_input_enabled = true (the default) but $dir is missing:' in text
+    assert 'warn "claudia_voice_input_enabled = true but $dir does not match its pins:' in text
+    assert "switches act only with claudia_enabled" in text
+
+
+def test_check_sh_checks_soundfile_imports_when_voice_input_is_on() -> None:
+    text = CHECK_SH.read_text()
+    assert 'VENV_PYTHON="${VENV_PYTHON:-/opt/preview-dashboard/.venv/bin/python}"' in text
+    block = text[text.index("# Voice notes are decoded with soundfile/numpy") :]
+    block = block[: block.index('if [[ "$photo" == "True" ]]')]
+    assert 'if [[ "$voice" == "True" ]]' in block
+    assert "import numpy, soundfile" in block
+    assert 'warn "claudia_voice_input_enabled = true but soundfile/numpy do not import' in block
+
+
 def test_voice_models_pinned_install_the_extra_and_files(tmp_path: Path) -> None:
     deploy_copy = _deploy_copy(tmp_path)
     models = tmp_path / "models"
@@ -2316,7 +2508,14 @@ def test_voice_models_pinned_install_the_extra_and_files(tmp_path: Path) -> None
     for name in names:
         assert f"install -m 0600 -o root -g root {models}/{name} {staging}/{name}" in out
         assert f"mv -f -- {staging}/{name} {voices}/{name}" in out
-    assert "curl" not in INSTALL_SH.read_text() and "wget" not in INSTALL_SH.read_text()
+    # Voice models are never downloaded; only the opt-in --whisper path may fetch (F-CL4 C).
+    text = INSTALL_SH.read_text()
+    voice_step = text[text.index('log "voice models') : text.index("# Every run re-verifies")]
+    assert "curl" not in voice_step and "wget" not in text
+    assert (
+        text.count("curl -fsSL") == 2 + 2
+    )  # two real calls + two dry-run echoes, all in install_whisper
+    assert text.index("curl -fsSL") > text.index("install_whisper() {")
 
 
 def test_deploy6_voice_hashes_are_checked_on_the_copies(tmp_path: Path) -> None:
@@ -2650,6 +2849,8 @@ def _getent_stub(tmp_path: Path, group_lines: dict[str, str], passwd: str = "") 
             "mallory",
         ),
         ({"pdash-totp": "pdash-totp:x:992:pdash-viewer"}, "", "pdash-viewer"),
+        # F-CL6: the viewer holds pdash-viewtok via its unit, never as a member.
+        ({"pdash-viewtok": "pdash-viewtok:x:993:pdash-admin,pdash-viewer"}, "", "pdash-viewer"),
     ],
 )
 def test_deploy5_install_refuses_a_group_with_unexpected_members(
@@ -2670,11 +2871,108 @@ def test_deploy5_install_accepts_groups_holding_only_the_admin(tmp_path: Path) -
         "pdash-kb": "pdash-kb:x:990:",
         "pdash-claudiatok": "pdash-claudiatok:x:991:pdash-admin",
         "pdash-totp": "pdash-totp:x:992:pdash-admin",
+        "pdash-viewtok": "pdash-viewtok:x:993:pdash-admin",
     }
     stub = _getent_stub(tmp_path, groups)
     result = run_install_dry_run(tmp_path / "p", *_CLAUDIA_ARGS, getent=stub)
     assert result.returncode == 0, result.stderr
     assert "group pdash-claudiatok already exists" in result.stdout
+    assert "group pdash-viewtok already exists" in result.stdout
+
+
+# --- F-CL6 (ADR 0043, C46): dashboard decisions are wired by install/check ----------
+
+
+def test_fcl6_install_creates_the_viewer_token_and_group(tmp_path: Path) -> None:
+    result = run_install_dry_run(tmp_path, *_CLAUDIA_ARGS)
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    etc = f"{tmp_path}/etc/preview-dashboard"
+    for expected in (
+        "groupadd --system pdash-viewtok",
+        "usermod -aG pdash-viewtok pdash-admin",
+        # root:pdash-viewtok 0640 via gen-token, like the notifier/claudia tokens
+        f"gen-token --out {etc}/viewer.token --group pdash-viewtok",
+        "--token-group viewer=pdash-viewtok",  # check-config validates it
+    ):
+        assert expected in out, f"dry-run (--claudia) missing {expected!r}"
+    text = INSTALL_SH.read_text()
+    assert 'chown root:"$VIEWER_TOK_GROUP" "$VIEWER_TOKEN_FILE"' in text
+    assert 'chmod "$TOKEN_FILE_MODE" "$VIEWER_TOKEN_FILE"' in text
+
+
+def test_fcl6_viewer_group_exists_without_claudia_but_no_token(tmp_path: Path) -> None:
+    """Both static units name pdash-viewtok, so it exists on every host; the
+    token file and the admin's membership come only with --claudia."""
+    result = run_install_dry_run(tmp_path)
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    assert "groupadd --system pdash-viewtok" in out
+    assert "viewer.token" not in out
+    assert "usermod -aG pdash-viewtok" not in out
+
+
+def test_fcl6_decisions_default_on_in_settings_and_example() -> None:
+    assert Settings.model_fields["claudia_dashboard_decisions"].default is True
+    example = tomllib.loads(CONFIG_EXAMPLE.read_text())
+    assert example["claudia_dashboard_decisions"] is True
+    assert example["viewer_token_file"] == str(Settings.model_fields["viewer_token_file"].default)
+
+
+def test_fcl6_check_sh_verifies_decisions_wiring() -> None:
+    text = CHECK_SH.read_text()
+    assert 'check_dashboard_decisions "$config_json"' in text
+    for expected in (
+        "check_owner_mode /etc/preview-dashboard/viewer.token root:pdash-viewtok 640",
+        "check_group_members pdash-viewtok pdash-admin",
+        "-G pdash-viewtok --)",
+        "test -w /run/preview-dashboard/admin.sock",
+        'warn "dashboard decisions are on but $viewer_unit / $dropin are not wired',
+        'warn "dashboard decisions are on but $admin_unit is not wired',
+        "/v1/viewer/approvals/00000000000000000000000000/decision",
+        "an admin route refuses the viewer token (403",
+    ):
+        assert expected in text, expected
+
+
+VIEWER_DROPIN = SYSTEMD_DIR / "preview-dashboard-viewer.service.d" / "claudia-decisions.conf"
+
+
+def test_fcl6_dropin_restates_the_viewer_masks_minus_the_run_mask() -> None:
+    """Only Claudia hosts drop the L1 mask; the drop-in must not lose any other
+    mask (an empty InaccessiblePaths= resets the whole list)."""
+    static = " ".join(parse_unit(VIEWER_UNIT)[("Service", "InaccessiblePaths")]).split()
+    values = parse_unit(VIEWER_DROPIN)[("Service", "InaccessiblePaths")]
+    assert values[0] == ""  # the reset
+    dropin = " ".join(values).split()
+    assert "/run/preview-dashboard" not in dropin
+    assert sorted(dropin) == sorted(p for p in static if p != "/run/preview-dashboard")
+
+
+def test_fcl6_install_sh_writes_the_dropin_on_claudia_hosts_only(tmp_path: Path) -> None:
+    claudia = run_install_dry_run(tmp_path, *_CLAUDIA_ARGS)
+    assert claudia.returncode == 0, claudia.stderr
+    etc_systemd = f"{tmp_path}/etc/systemd/system"
+    assert (
+        f"install -m 0644 {DEPLOY_DIR}/systemd/preview-dashboard-viewer.service.d/"
+        f"claudia-decisions.conf {etc_systemd}/preview-dashboard-viewer.service.d/"
+        "claudia-decisions.conf"
+    ) in claudia.stdout
+    (tmp_path / "plain").mkdir()
+    plain = run_install_dry_run(tmp_path / "plain")
+    assert plain.returncode == 0, plain.stderr
+    assert "claudia-decisions.conf" not in plain.stdout
+    assert "claudia-decisions.conf" in UNINSTALL_SH.read_text()
+
+
+def test_fcl6_check_sh_requires_the_dropin() -> None:
+    text = CHECK_SH.read_text()
+    assert "preview-dashboard-viewer.service.d/claudia-decisions.conf" in text
+    assert "are not wired for them (re-run install.sh)" in text
+
+
+def test_fcl6_uninstall_purges_the_viewer_token_group() -> None:
+    assert "pdash-viewtok" in UNINSTALL_SH.read_text()
 
 
 # --- voice-4: the voice extra is bounded and audited in CI ---------------------------

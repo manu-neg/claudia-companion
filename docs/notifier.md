@@ -32,10 +32,12 @@
  "payload": {"text": "❓ …", "buttons": [{"key": "a", "label": "SQLite"}],
              "link": "https://<dashboard>/#/item/01J…" | null,
              "question_id": "01J…" | null, "final_state": "answered" | "expired" | "cancelled" | null,
-             "approval_id": "01J…"},   // approval prompts only (A1); absent otherwise
+             "approval_id": "01J…",    // approval prompts only (A1); absent otherwise
+             "approval_outcome": "denied"},  // a decided prompt's RESOLVE only (F-CL5)
  "message_ref": "<chat_id>:<message_id>" | null}
 ```
 - Approval prompt (C46, ADR 0033): `approval_id` set, `buttons: []`, `link: null`, no `question_id`/`final_state`/`long_form`; `text` is the request's stored action text. The admin hands it out only while the request is PENDING and unexpired (else settles it unsent); the channel draws exactly `[Approve p:<id>:ok][Deny p:<id>:no]`.
+- Approval outcome edit (C46, F-CL5, ADR 0041 addendum): `action: "resolve"`, `approval_id` + `approval_outcome` (`approved` \| `consumed` \| `denied` \| `cancelled` \| `expired`), `text` exactly that outcome's fixed text (`APPROVAL_OUTCOME_TEXTS`), still no `final_state`. The channel edits the prompt to its own copy of that constant with an empty keyboard (buttons gone); an approval edit without an outcome is refused.
 - `wait`/`limit`: ASCII digits only (`parse_wait_param`, `parse_limit_param`). Unknown JSON keys → 400.
 - Answer `question_id`/`key` are raw strings ≤ 64 chars: the admin turns anything unknown into `unknown` (C34).
 - A task the notifier cannot validate is reported `failed` (so backoff retires it) and skipped. `text` and button labels must already be clean (`reject_invisible`, C35): invisible chars (ZWSP, word joiner, tag chars, blank look-alikes such as braille blank or U+FFFC, Hangul filler, soft hyphen, CGJ, bidi, and ZWJ/ZWNJ/VS16 outside emoji or complex-script sequences, ADR 0026) are refused, never stripped.
@@ -48,17 +50,20 @@
 | `POST /v1/notifier/messages` | `{"update_id", "message_id", "sender_id", "text", "is_forwarded", "reply_to_message_id": int \| null, "quote_text": str \| null}` | `{"result": "stored" \| "duplicate"}` |
 | `POST /v1/notifier/approvals` | `{"request_id": ULID, "decision": "approve" \| "deny", "source", "actor_ref"}` | `{"result": "tapped" \| "denied" \| "already_decided" \| "expired" \| "unknown"}` |
 | `POST /v1/notifier/codes` | `{"update_id", "message_id", "sender_id", "code": "[0-9]{6}"}` | `{"result": "accepted" \| "refused" \| "locked" \| "duplicate"}` |
+| `POST /v1/notifier/media` (C61, `wire/notifier_media.py`) | `{"update_id", "message_id", "sender_id", "kind": "voice" \| "photo", "data": base64, "caption": str \| null, "is_forwarded", "reply_to_message_id"?, "quote_text"?}` | `{"result": "stored" \| "duplicate"}`; 422 = refused for good (switch off, not Ogg/Opus or JPEG, over a cap) |
 
 - Messages: idempotent on `update_id` + `message_id`; `text` already redacted (every 6-digit run → `[code redacted]`), verbatim otherwise; `sender_id` = the owner id (the admin re-checks it against its own config). 400/413/422 → the notifier drops the update; anything else → it is re-read (offset rewound, later updates of the batch with it) after the runner's backoff, given up after 8 tries.
 - Approval buttons: `callback_data = "p:<request ULID>:ok|no"` (`approval_callback_data`); toasts are fixed (`TAP_ACK_TEXTS`, admin down → `Not recorded, try again`). After a `tapped` verdict the notifier also sends one fixed chat message, `CODE_PROMPT_TEXT` ("send your authenticator code"), via `TelegramChannel.send_code_prompt()` (no text argument); a failure there is logged by type and never blocks the loop.
 - Codes: never retried, never in the inbox, never logged; the code message is deleted (`deleteMessage`) after the post, whatever the outcome. A repeated `update_id` + `message_id` must answer `duplicate` (not a second wrong try). Feedback to the owner comes as outbox alerts from the admin.
 
-**Switch:** owner-message intake and voice delivery are on only when `config.claudia_enabled` is exactly `true` (default false = the notifier behaves as before Claudia); a missing or odd value means off. No second flag.
+- Media (C61): only the owner's own voice note (≤ 120 s, ≤ 2 MiB, `audio/ogg`) or photo (largest size ≤ 10 MiB, sides ≤ 4096). Metadata is checked before `getFile`; the file is then streamed from `api.telegram.org/file/bot…/<file_path>` with a byte cap. Switch off → dropped, notice `MEDIA_OFF`; over a cap, album, document, unsafe path or a 400/413/422 verdict → dropped, notice `MEDIA_REFUSED`. Each notice is sent at most once per hour. Transient errors rewind like messages. The admin checks the bytes again and strips JPEG metadata.
+
+**Switch:** owner-message intake and voice delivery are on only when `config.claudia_enabled` is exactly `true` (default false = the notifier behaves as before Claudia); a missing or odd value means off. Owner voice/photo intake also needs `claudia_voice_input_enabled` / `claudia_photo_input_enabled` exactly `true` (default false, C61).
 
 ## Telegram
 | Aspect | Rule |
 |---|---|
-| Base URL | fixed `https://api.telegram.org`; methods allowlisted (`getUpdates`, `sendMessage`, `editMessageText`, `answerCallbackQuery`, `getMe`, `deleteMessage`, `sendVoice`); `sendVoice` only through `upload` (multipart file ≤ 1 MiB), never as JSON (no audio by URL / file id) |
+| Base URL | fixed `https://api.telegram.org`; methods allowlisted (`getUpdates`, `sendMessage`, `editMessageText`, `answerCallbackQuery`, `getMe`, `deleteMessage`, `sendVoice`, `getFile`); file download only via `TelegramBotClient.download` (validated `file_path`, streamed, ≤ 10 MiB, kind cap below that, C61); `sendVoice` only through `upload` (multipart file ≤ 1 MiB), never as JSON (no audio by URL / file id) |
 | Voice (C56) | `TelegramChannel.send_voice(audio)`: `events.voice.validate_voice_audio` first (one Ogg/Opus stream, ≤ 1 MiB, ≤ 60 s), no caption (the text goes as its own message); task plumbing lands with M10 |
 | Owner messages (C44, opt-in) | `allowed_updates=["callback_query", "message"]`; a message counts only if `from.id == chat.id == notify_owner_chat_id`, private chat, `is_bot` false, plain `text` ≤ 4096 (no media/caption, not `via_bot`/`sender_chat`/edited); ignored ones get no reply, logged by update id only. Forwarded (`forward_origin`, `is_automatic_forward`, legacy `forward_*`, `external_reply`) → `is_forwarded`; `reply_to_message.message_id` and `quote.text` kept as metadata. Whole text ASCII `[0-9]{6}` (spaces removed) → code route |
 | HTTP | httpx, TLS verify, `trust_env=False` (client **and** transport), no redirects, identity encoding, replies ≤ 1 MiB, connect 10 s / read 20 s (long-poll: wait + 15 s) |

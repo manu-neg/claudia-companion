@@ -3,8 +3,9 @@
 Who may do what is fixed by the routes that call in (C45): the `claudia`
 token creates PENDING requests, reads them, consumes APPROVED ones and
 cancels open ones (`/stop`, C58: cancel only ever closes a request); the
-notifier token records Approve/Deny taps; only `StepUpService` (after a
-verified TOTP code) moves TAPPED -> APPROVED. Every transition is the
+notifier token records Approve/Deny taps; the viewer token forwards the
+owner's dashboard Approve/Deny (F-CL6, re-validated here); only
+`StepUpService` (after a verified TOTP code) moves TAPPED -> APPROVED. Every transition is the
 store's compare-and-swap, expiry (24 h; legacy rows 600 s) is checked first on every access,
 and unknown or malformed ids yield `unknown` (no existence oracle). Action
 text and target are secret-scanned like alert text (C35); a
@@ -13,7 +14,10 @@ never taken from the caller. Creation is bounded (storage-totp-2, newcode-7):
 at most 10 created requests per hour (5 per window; `/stop` resets the
 window's share) and at most 3 open across all windows, so no loop can flood
 the owner with prompts; refused attempts have their own budget (30/h, 10 per
-window) and never use the created one. Pure core: ports only.
+window) and never use the created one. Once a request is approved,
+denied, cancelled or expired, its Telegram prompt is queued for a fixed
+outcome edit (F-CL5), best effort and only after the decision is stored.
+Pure core: ports only.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ from enum import StrEnum
 from typing import Final
 
 from preview_dashboard.application.notify import new_ulid, scan_texts
+from preview_dashboard.domain.approval_decisions import DecisionResult
 from preview_dashboard.domain.approvals import (
     ActionKind,
     ApprovalId,
@@ -54,7 +59,7 @@ from preview_dashboard.domain.owner_messages import (
     parse_owner_message_id,
 )
 from preview_dashboard.ports.approvals import ApprovalStore
-from preview_dashboard.ports.claudia import ApprovalPrompts, ChangeEvents
+from preview_dashboard.ports.claudia import ApprovalPrompts, ApprovalResolutions, ChangeEvents
 from preview_dashboard.ports.clock import Clock
 from preview_dashboard.ports.ids import IdGenerator
 from preview_dashboard.ports.owner_messages import OwnerMessageStore
@@ -245,6 +250,8 @@ class ApprovalService:
         ids: ULID source for request ids.
         scanner: secret scanner for action text and target (C35).
         prompts: queues the Approve/Deny message for a new request.
+        resolutions: queues the prompt's fixed outcome edit once a request is
+            approved, denied, cancelled or expired (F-CL5; optional, best effort).
         events: wakes long-polls on any state change (optional).
         budgets: hourly budgets for created and refused requests, global and
             per window (in-process like the alert budget; a restart resets them).
@@ -261,6 +268,7 @@ class ApprovalService:
         ids: IdGenerator,
         scanner: ContentScanner,
         prompts: ApprovalPrompts,
+        resolutions: ApprovalResolutions | None = None,
         events: ChangeEvents | None = None,
         budgets: ApprovalBudgetPolicy | None = None,
         max_open: int = MAX_OPEN_APPROVALS,
@@ -274,6 +282,7 @@ class ApprovalService:
         self._ids = ids
         self._scanner = scanner
         self._prompts = prompts
+        self._resolutions = resolutions
         self._events = events
         self._budgets = _ApprovalBudgets(budgets or ApprovalBudgetPolicy(), monotonic)
         self._max_open = max_open
@@ -452,6 +461,7 @@ class ApprovalService:
                 continue
             self._changed()
             logger.info("approval request cancelled: id=%s", cancelled.id)
+            self._resolved(cancelled)
             return CancelResult.CANCELLED, cancelled
         logger.warning("approval request %s not cancelled: kept changing", approval_id)
         final = self._lookup(approval_id)
@@ -505,6 +515,8 @@ class ApprovalService:
             return TapResult.ALREADY_DECIDED
         self._changed()
         logger.info("approval request %s: id=%s", result, request.id)
+        if result is TapResult.DENIED:
+            self._resolved(updated)
         return result
 
     # --- step-up (TOTP verified) ------------------------------------------------------
@@ -527,24 +539,95 @@ class ApprovalService:
             return False
         self._changed()
         logger.info("approval request approved: id=%s", request.id)
+        self._resolved(approved)
         return True
+
+    # --- dashboard decisions (F-CL6): the viewer only forwards, all checks are here ----
+
+    def open_for_decision(
+        self, approval_id: str
+    ) -> tuple[DecisionResult | None, ApprovalRequest | None]:
+        """The request if the owner may still decide it, else the verdict to report.
+
+        Decidable = PENDING or TAPPED and not expired (checked here, by the
+        admin's clock, never by what the viewer showed).
+
+        Returns:
+            `(None, request)` when decidable; otherwise `(UNKNOWN, None)` for a
+            malformed or unknown id (no oracle), `(EXPIRED, request)` or
+            `(ALREADY_DECIDED, request)`.
+        """
+        request = self._lookup(approval_id)
+        if request is None:
+            return DecisionResult.UNKNOWN, None
+        if request.state is ApprovalState.EXPIRED:
+            return DecisionResult.EXPIRED, request
+        if request.state not in (ApprovalState.PENDING, ApprovalState.TAPPED):
+            return DecisionResult.ALREADY_DECIDED, request
+        return None, request
+
+    def approve_with_verified_code(self, request: ApprovalRequest) -> DecisionResult:
+        """Approve a request whose code `StepUpService` just verified (dashboard path).
+
+        The same lifecycle as Telegram, one CAS per step: PENDING -> TAPPED
+        (the panel click stands in for the tap) -> APPROVED. Losing either
+        CAS (a Telegram tap, code or Deny got there first) reports what the
+        winner left: first decision wins across both surfaces.
+        """
+        current = request
+        if current.state is ApprovalState.PENDING:
+            try:
+                tapped = current.tapped(self._at(current))
+                self._store.save(tapped, expected_updated_at=current.updated_at)
+            except (ConflictError, InvalidStateError, NotFoundError):
+                return self._race_verdict(request.id)
+            self._changed()
+            current = tapped
+        if not self.approve(current):
+            return self._race_verdict(request.id)
+        logger.info("approval request decided on the dashboard: id=%s approved", request.id)
+        return DecisionResult.APPROVED
+
+    def deny_from_dashboard(self, approval_id: str) -> DecisionResult:
+        """Deny from the panel (PENDING/TAPPED -> DENIED); first decision wins (no code needed).
+
+        Deny only ever takes power away, like a Telegram Deny tap.
+        """
+        result = self.tap(approval_id, TapDecision.DENY)
+        if result is TapResult.DENIED:
+            logger.info("approval request decided on the dashboard: id=%s denied", approval_id)
+            return DecisionResult.DENIED
+        return {
+            TapResult.EXPIRED: DecisionResult.EXPIRED,
+            TapResult.UNKNOWN: DecisionResult.UNKNOWN,
+        }.get(result, DecisionResult.ALREADY_DECIDED)
+
+    def _race_verdict(self, approval_id: str) -> DecisionResult:
+        again = self._lookup(approval_id)
+        if again is None:
+            return DecisionResult.UNKNOWN
+        if again.state is ApprovalState.EXPIRED:
+            return DecisionResult.EXPIRED
+        return DecisionResult.ALREADY_DECIDED
 
     # --- housekeeping ----------------------------------------------------------------
 
     def expire_due(self) -> int:
         """Mark every open request past its expiry EXPIRED; return how many changed."""
         now = self._clock.now()
-        changed = 0
+        done: list[ApprovalRequest] = []
         for request in self._store.list_expirable(now):
             try:
                 expired = request.expired(max(now, request.updated_at))
                 self._store.save(expired, expected_updated_at=request.updated_at)
-                changed += 1
+                done.append(expired)
             except (ConflictError, InvalidStateError):
                 continue  # someone else resolved it first
-        if changed:
+        if done:
             self._changed()
-        return changed
+        for expired in done:
+            self._resolved(expired)
+        return len(done)
 
     # --- helpers ---------------------------------------------------------------------
 
@@ -589,6 +672,7 @@ class ApprovalService:
         except (ConflictError, InvalidStateError):
             return self._store.get(request.id)
         self._changed()
+        self._resolved(expired)
         return expired
 
     def _at(self, request: ApprovalRequest) -> datetime:
@@ -599,6 +683,21 @@ class ApprovalService:
     def _changed(self) -> None:
         if self._events is not None:
             self._events.notify()
+
+    def _resolved(self, request: ApprovalRequest) -> None:
+        """Queue the prompt's outcome edit (F-CL5); best effort, after the decision is stored.
+
+        Any failure is logged (type only) and swallowed: the edit is cosmetic,
+        the stored decision is what counts and must never be undone or delayed.
+        """
+        if self._resolutions is None:
+            return
+        try:
+            self._resolutions.resolve(request)
+        except Exception as exc:
+            logger.warning(
+                "approval request %s: prompt edit not queued (%s)", request.id, type(exc).__name__
+            )
 
     def _consume_refusal(self, request: ApprovalRequest) -> ConsumeResult:
         if request.state is ApprovalState.CONSUMED:

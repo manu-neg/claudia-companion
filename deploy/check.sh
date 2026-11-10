@@ -23,6 +23,7 @@ set -euo pipefail
 
 CONFIG_FILE=""
 PDASH_BIN="${PDASH_BIN:-/opt/preview-dashboard/.venv/bin/preview-dashboard}"
+VENV_PYTHON="${VENV_PYTHON:-/opt/preview-dashboard/.venv/bin/python}"
 
 usage() {
     cat <<'EOF'
@@ -651,6 +652,99 @@ check_claudia() {
     done
 }
 
+# --- F-CL6 (C46, ADR 0043): dashboard Approve/Deny, only while active --------
+# (claudia_enabled and claudia_dashboard_decisions, as check-config reports).
+# Warns when the feature is on but the units are not wired for it (an old
+# unit file: re-run install.sh); fails on a wrong token mode, an extra group
+# member, or a viewer that cannot reach the admin socket in its namespace.
+check_dashboard_decisions() {
+    local config_json="$1" active snapshot_set
+    active="$(python3 -c 'import json, sys; print(json.load(sys.stdin).get("claudia_dashboard_decisions", False))' \
+        <<<"$config_json" 2>/dev/null)" || active="False"
+    if [[ "$active" != "True" ]]; then
+        skip "dashboard decisions are not active (Claudia off or claudia_dashboard_decisions = false)"
+        return
+    fi
+    snapshot_set="$(python3 -c 'import json, sys; print(json.load(sys.stdin).get("claudia_approvals_snapshot_set", False))' \
+        <<<"$config_json" 2>/dev/null)" || snapshot_set="False"
+    if [[ "$snapshot_set" != "True" ]]; then
+        warn "dashboard decisions are on but claudia_approvals_snapshot is unset: the panel shows no Approve/Deny"
+    fi
+
+    check_owner_mode /etc/preview-dashboard/viewer.token root:pdash-viewtok 640
+    # Only the admin (verifier) is a member; the viewer holds it via its unit.
+    check_group_members pdash-viewtok pdash-admin
+
+    local viewer_unit=/etc/systemd/system/preview-dashboard-viewer.service
+    local admin_unit=/etc/systemd/system/preview-dashboard-admin.service
+    # The static unit keeps the L1 mask; the Claudia drop-in lifts it (F-CL6).
+    local dropin=/etc/systemd/system/preview-dashboard-viewer.service.d/claudia-decisions.conf
+    if grep -q -- '--token-group viewer=pdash-viewtok' "$viewer_unit" 2>/dev/null \
+        && grep -q '^SupplementaryGroups=.*pdash-viewtok' "$viewer_unit" 2>/dev/null \
+        && grep -q '^InaccessiblePaths=.*/run/preview-dashboard' "$viewer_unit" 2>/dev/null \
+        && [[ -r "$dropin" ]] \
+        && ! grep -q '^InaccessiblePaths=.*/run/preview-dashboard' "$dropin" 2>/dev/null; then
+        pass "the viewer unit and its Claudia drop-in are wired for dashboard decisions"
+    else
+        warn "dashboard decisions are on but $viewer_unit / $dropin are not wired for them (re-run install.sh)"
+    fi
+    if grep -q -- '--viewer-peer-uid' "$admin_unit" 2>/dev/null \
+        && grep -q -- '--token-group viewer=pdash-viewtok' "$admin_unit" 2>/dev/null; then
+        pass "the admin unit is wired for dashboard decisions"
+    else
+        warn "dashboard decisions are on but $admin_unit is not wired for them (re-run install.sh)"
+    fi
+
+    # Socket access from inside the viewer's own namespace, with its unit's groups.
+    if ! have nsenter; then
+        fail "nsenter is not installed; cannot verify the viewer's admin-socket access"
+        return
+    fi
+    local vpid
+    vpid="$(systemctl show preview-dashboard-viewer.service --property=MainPID --value 2>/dev/null)" || vpid=""
+    if [[ -z "$vpid" || "$vpid" == "0" ]]; then
+        fail "preview-dashboard-viewer.service has no MainPID; cannot check its admin-socket access"
+        return
+    fi
+    local as_viewer=(nsenter --mount="/proc/${vpid}/ns/mnt" -- runuser -u pdash-viewer -g pdash -G pdash-viewtok --)
+    if "${as_viewer[@]}" test -w /run/preview-dashboard/admin.sock 2>/dev/null; then
+        pass "the viewer can open the admin socket in its namespace (dashboard decisions)"
+    else
+        fail "the viewer cannot open /run/preview-dashboard/admin.sock in its namespace (masked? restart the viewer)"
+    fi
+    if "${as_viewer[@]}" test -r /etc/preview-dashboard/viewer.token 2>/dev/null; then
+        pass "the viewer can read viewer.token (pdash-viewtok)"
+    else
+        fail "the viewer cannot read /etc/preview-dashboard/viewer.token"
+    fi
+    if "${as_viewer[@]}" test -r /etc/preview-dashboard/admin.token 2>/dev/null; then
+        fail "the viewer CAN read admin.token (InaccessiblePaths not effective)"
+    else
+        pass "the viewer still cannot read admin.token"
+    fi
+
+    # Token scope (C4/C46): the viewer token reaches only /v1/viewer/*, from
+    # pdash-viewer. An empty body is refused (400) after auth: nothing decided.
+    local viewer_tok=/etc/preview-dashboard/viewer.token code
+    if ! have curl || ! have runuser || [[ ! -r "$viewer_tok" ]]; then
+        fail "curl, runuser or viewer.token missing; cannot check the viewer token's scope"
+        return
+    fi
+    code="$(probe_admin_socket pdash-viewer "$viewer_tok" POST \
+        /v1/viewer/approvals/00000000000000000000000000/decision)"
+    if [[ "$code" == "400" ]]; then
+        pass "pdash-viewer with the viewer token reaches /v1/viewer/* (control, 400 empty body)"
+    else
+        fail "pdash-viewer with the viewer token got HTTP $code on /v1/viewer/* (expected 400)"
+    fi
+    code="$(probe_admin_socket root "$viewer_tok" GET /v1/health)"
+    if [[ "$code" == "403" ]]; then
+        pass "an admin route refuses the viewer token (403, from an allowed uid)"
+    else
+        fail "/v1/health returned HTTP $code for the viewer token as root (expected 403)"
+    fi
+}
+
 # deploy-5: group $1's members (member list + users whose primary group it
 # is), sorted and comma-joined, must equal $2 ("" = no members).
 check_group_members() {
@@ -684,6 +778,71 @@ check_owner_only_mode() {
         pass "$path is owned by $expect_owner, mode $expect_mode"
     else
         fail "$path is '${got:-?}' (expected owner $expect_owner, mode $expect_mode)"
+    fi
+}
+
+# Config booleans from the check-config summary ("False" when the key is absent).
+config_flag() {
+    python3 -c 'import json, sys; print(json.load(sys.stdin).get(sys.argv[1], False))' "$2" \
+        <<<"$1" 2>/dev/null || echo "False"
+}
+
+# --- F-CL4 / C61 / C62: voice + photo input switches and the whisper install --
+# Read-only. The pins are checked whenever /opt/claudia-whisper exists; a
+# missing or mismatched install only warns (the host turns voice input off
+# itself and alerts). Both switches default to on; with Claudia off they do nothing.
+check_media_input() {
+    local config_json="$1" claudia voice photo dir=/opt/claudia-whisper
+    claudia="$(config_flag "$config_json" claudia_enabled)"
+    voice="$(config_flag "$config_json" claudia_voice_input_enabled)"
+    photo="$(config_flag "$config_json" claudia_photo_input_enabled)"
+
+    local whisper_ok=0 rec="$dir/whisper.sha256" rec_model rec_bin
+    if [[ -e "$dir" ]]; then
+        rec_model="$(sed -n 's/^\([0-9a-f]\{64\}\)  model$/\1/p' "$rec" 2>/dev/null)" || rec_model=""
+        rec_bin="$(sed -n 's/^\([0-9a-f]\{64\}\)  binary$/\1/p' "$rec" 2>/dev/null)" || rec_bin=""
+        if [[ -n "$rec_model" && -n "$rec_bin" \
+            && "$(sha256sum -- "$dir/models/ggml-base.bin" 2>/dev/null | cut -d' ' -f1)" == "$rec_model" \
+            && "$(sha256sum -- "$dir/bin/whisper-cli" 2>/dev/null | cut -d' ' -f1)" == "$rec_bin" \
+            && "$(sed -n 's/^\([0-9a-f]\{64\}\)  model$/\1/p' /opt/preview-dashboard/deploy/claudia/whisper.sha256 2>/dev/null)" == "$rec_model" ]]; then
+            whisper_ok=1
+            pass "$dir matches its recorded hashes and the pinned model (C62)"
+        else
+            fail "$dir does not match its recorded hashes or the pinned model -- re-run: install.sh --whisper (C62)"
+        fi
+        check_owner_mode "$dir" root:root 755
+        check_owner_mode "$dir/bin/whisper-cli" root:root 755
+        check_owner_mode "$dir/models/ggml-base.bin" root:root 644
+    else
+        skip "$dir does not exist (voice-note transcription not installed)"
+    fi
+
+    # Both switches default to on (owner 2026-11-09): with Claudia off they do nothing.
+    if [[ "$claudia" != "True" ]]; then
+        skip "voice/photo input switches act only with claudia_enabled (currently off)"
+        return
+    fi
+    if [[ "$voice" == "True" && ! -e "$dir" ]]; then
+        warn "claudia_voice_input_enabled = true (the default) but $dir is missing:" \
+            "voice notes are NOT transcribed; the host turns voice input off, alerts once and" \
+            "answers voice notes with a fixed reply. Install: install.sh --claudia --whisper," \
+            "or set claudia_voice_input_enabled = false"
+    elif [[ "$voice" == "True" && "$whisper_ok" -ne 1 ]]; then
+        warn "claudia_voice_input_enabled = true but $dir does not match its pins:" \
+            "the host turns voice input off (re-run install.sh --claudia --whisper)"
+    fi
+    # Voice notes are decoded with soundfile/numpy (the claudia-voice extra,
+    # which install.sh --whisper installs); without them every note fails.
+    if [[ "$voice" == "True" ]]; then
+        if "$VENV_PYTHON" -c 'import numpy, soundfile' >/dev/null 2>&1; then
+            pass "soundfile and numpy import in the host venv (voice-note decoding)"
+        else
+            warn "claudia_voice_input_enabled = true but soundfile/numpy do not import in" \
+                "$VENV_PYTHON: voice notes cannot be decoded (re-run install.sh --claudia --whisper)"
+        fi
+    fi
+    if [[ "$photo" == "True" ]]; then
+        pass "photo input on (read-only photo turns unless claudia_photo_turn_tools = \"full\")"
     fi
 }
 
@@ -723,6 +882,8 @@ main() {
     check_funnel_off
     check_notifier "$config_json"
     check_claudia "$config_json"
+    check_dashboard_decisions "$config_json"
+    check_media_input "$config_json"
 
     echo
     if [[ "$FAILURES" -gt 0 ]]; then

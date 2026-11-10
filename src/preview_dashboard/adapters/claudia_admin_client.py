@@ -3,8 +3,9 @@
 Talks only to `/v1/claudia/*` in the format of `wire/claudia.py` (inbox,
 handled mark, replies, approvals, health), the cancel routes of unit A1
 (`/approvals/{id}/cancel`, `/approvals/cancel-open {"window_id"}`, for
-`/stop`, C58; result codes parsed strictly) and the voice route (C56).
-Implements the `HostAdmin`, `ApprovalAdmin` and `VoiceReplies` ports.
+`/stop`, C58; result codes parsed strictly), the voice route (C56) and the
+owner-media fetch/release routes (C61/C62). Implements the `HostAdmin`,
+`ApprovalAdmin`, `VoiceReplies` and `HostMedia` ports.
 The token lives only in the client's default headers (never logged or
 repr'd); proxies/env are ignored; responses are size-bounded and
 re-validated by the domain types. `ReplyAlerts` sends the host's fixed
@@ -32,7 +33,13 @@ from preview_dashboard.domain.approvals import (
     parse_approval_id,
     parse_window_id,
 )
-from preview_dashboard.domain.errors import ConflictError, StorageUnavailableError, ValidationError
+from preview_dashboard.domain.errors import (
+    ConflictError,
+    NotFoundError,
+    StorageUnavailableError,
+    ValidationError,
+)
+from preview_dashboard.domain.owner_media import PHOTO_MAX_BYTES
 from preview_dashboard.domain.owner_messages import OwnerMessage, OwnerMessageId
 from preview_dashboard.wire import claudia as wire
 from preview_dashboard.wire.claudia_voice import VOICE_PATH, VoiceRequest, voice_request_to_json
@@ -347,6 +354,33 @@ class ClaudiaAdminClient:
             raise
         return True
 
+    # --- owner media (C61 routes, used by unit F-CL4 B, C62) -----------------------------
+
+    def fetch_media(self, message_id: OwnerMessageId) -> bytes:
+        """`GET …/messages/{id}/media`: the checked bytes (<= 10 MiB, the photo cap).
+
+        Raises:
+            NotFoundError: 404 (text message, released or purged).
+            ClaudiaAdminError: transport error, another status or an oversized body.
+        """
+        request = self._http.build_request("GET", wire.message_media_path(message_id))
+        status, raw, failure = self._exchange(request, limit=PHOTO_MAX_BYTES)
+        if failure is not None:
+            raise ClaudiaAdminError(f"admin API media: request failed ({failure})")
+        if status == 404:
+            raise NotFoundError("no media for this message")
+        if status != 200 or not raw:
+            raise ClaudiaAdminError(f"admin API media: {status}", status=status)
+        return raw
+
+    def release_media(self, message_id: OwnerMessageId) -> None:
+        """`POST …/messages/{id}/media/release` (`{}`; idempotent at the admin).
+
+        Raises:
+            ClaudiaAdminError: transport error or a non-200 status.
+        """
+        self._post(wire.message_media_release_path(message_id), {}, "media")
+
     # --- internals -----------------------------------------------------------------------
 
     @staticmethod
@@ -379,7 +413,9 @@ class ClaudiaAdminClient:
             raise ClaudiaAdminError(f"admin API {family}: {status} {label}", status=status)
         return body
 
-    def _exchange(self, request: httpx.Request) -> tuple[int, bytes, str | None]:
+    def _exchange(
+        self, request: httpx.Request, *, limit: int = MAX_RESPONSE_BYTES
+    ) -> tuple[int, bytes, str | None]:
         try:
             response = self._http.send(request, stream=True)
         except httpx.HTTPError as exc:
@@ -390,7 +426,7 @@ class ClaudiaAdminClient:
             body = bytearray()
             for chunk in response.iter_bytes():
                 body += chunk
-                if len(body) > MAX_RESPONSE_BYTES:
+                if len(body) > limit:
                     return response.status_code, b"", "ResponseTooLarge"
             return response.status_code, bytes(body), None
         except httpx.HTTPError as exc:

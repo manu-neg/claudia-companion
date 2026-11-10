@@ -32,6 +32,7 @@ from preview_dashboard.interfaces.http_server import (
 from preview_dashboard.interfaces.viewer.app_factory import build_dashboard_app, build_preview_app
 from preview_dashboard.interfaces.viewer.knowledge import build_knowledge
 from preview_dashboard.interfaces.viewer.services import ViewerServices
+from preview_dashboard.ports.approval_decisions import ApprovalDecider
 
 logger = logging.getLogger("preview_dashboard.viewer")
 
@@ -115,15 +116,21 @@ def uvicorn_config(
     return uvicorn.Config(app, **options)
 
 
-def build_servers(core: ViewerCoreLike) -> tuple[ManagedServer, ManagedServer]:
+def build_servers(
+    core: ViewerCoreLike, *, decider: ApprovalDecider | None = None
+) -> tuple[ManagedServer, ManagedServer]:
     """Build (dashboard, preview) servers on `viewer_host` : `viewer_port` / `preview_port`.
+
+    `decider` forwards dashboard Approve/Deny to the admin (F-CL6); None =
+    the approvals panel stays read-only.
 
     Raises:
         ConfigError: owner/hosts/preview origin unset or invalid (fail closed).
         StaticAssetError: the packaged static directory is unsafe.
     """
     settings = core.settings
-    dashboard = build_dashboard_app(settings, core, knowledge=build_knowledge(settings))
+    knowledge = build_knowledge(settings, decider=decider)
+    dashboard = build_dashboard_app(settings, core, knowledge=knowledge)
     preview = build_preview_app(settings, core)
     host = settings.viewer_host
     return (
@@ -161,10 +168,10 @@ async def run_servers(servers: Sequence[uvicorn.Server]) -> None:
             raise result
 
 
-def serve(core: ViewerCoreLike) -> None:
+def serve(core: ViewerCoreLike, *, decider: ApprovalDecider | None = None) -> None:
     """Run both viewer apps until SIGINT/SIGTERM (blocking); close the core afterwards."""
     try:
-        dashboard, preview = build_servers(core)
+        dashboard, preview = build_servers(core, decider=decider)
         settings = core.settings
         logger.info(
             "viewer listening: dashboard %s:%d, preview %s:%d",
