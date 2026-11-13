@@ -1,12 +1,14 @@
-"""Neumorph knowledge map (N3, docs/frontend-os.md#neumorph "Knowledge map").
+"""Neumorph knowledge map (N3 + N4, docs/frontend-os.md#neumorph "Knowledge map").
 
-Checks: the eight category cores are >= 3:1 on the porcelain and distinct; every map hook and
-state (stage, pearls, channels, labels, index, note slab, approvals incl. the F-CL6 code form) has
-a rule; the stage never shows a box outline; the approvals card is never hidden or animated away
-(C46 independent view); the map keyframes only move transform / opacity / stroke-dashoffset;
-fx/kmap.js is decoration only (no network, storage, HTML or text sinks, no prevented events,
-passive listeners, CSSOM writes, aria-hidden decor, pauses while hidden) and runs only with
-motion allowed.
+Checks: the eight category LEDs are >= 3:1 on the porcelain and distinct; every map hook and
+state (stage, keys, LEDs, grooves, labels, index, note slab, approvals incl. the F-CL6 code form)
+has a rule; the stage never shows a box outline; the approvals card is never hidden or animated
+away (C46 independent view); keys are moulded from the surface (no dot grid, no plates, no
+shine) and read as keys + LEDs without fx/; selected is the press, latched; the map keyframes
+only move transform / opacity / stroke-dashoffset and no filter is animated; every lit channel
+draws; fx/kmap.js is decoration only, in flat fills (no url(): no network, storage, HTML or
+text sinks, no prevented events, passive listeners, CSSOM writes, aria-hidden decor, pauses
+while hidden, skips selected keys in the pointer light) and runs only with motion allowed.
 """
 
 from __future__ import annotations
@@ -51,10 +53,17 @@ def _rules(css: str) -> list[tuple[str, str]]:
     """(selector list, body) of every plain rule, media blocks flattened."""
     flat = re.sub(r"@media[^{]*\{((?:[^{}]*\{[^{}]*\})*)\s*\}", r"\1", css)
     flat = re.sub(r"@keyframes[^{]*\{(?:[^{}]*\{[^{}]*\})*\s*\}", "", flat)
+    flat = re.sub(r"@property[^{]*\{[^{}]*\}", "", flat)
     return [(m.group(1).strip(), m.group(2)) for m in re.finditer(r"([^{}]+)\{([^{}]*)\}", flat)]
 
 
-def test_category_cores_are_distinct_and_at_least_3_to_1_on_the_porcelain() -> None:
+def _rule(css: str, selector: str) -> str:
+    bodies = [body for sel, body in _rules(css) if sel == selector]
+    assert bodies, selector
+    return "".join(bodies)
+
+
+def test_category_leds_are_distinct_and_at_least_3_to_1_on_the_porcelain() -> None:
     theme = _css(NEU / "theme.css")
     match = re.search(r"--color-surface:\s*(#[0-9a-f]{6})", theme)
     assert match
@@ -73,7 +82,8 @@ MAP_HOOKS = (
     ".kmap-map", ".kmap-svg", ".kmap-message", ".kmap-edge", '.kmap-edge[data-kind="tag"]',
     ".kmap-edge.is-near", ".kmap-edge.is-filtered", ".kmap-node", ".kmap-ring", ".kmap-dot",
     ".kmap-shine", ".kmap-label", ".kmap-node.is-recent", ".kmap-node.is-selected",
-    ".kmap-node.is-filtered", ".kmap-svg.has-focus", ".kmap-swatch", ".kmap-index",
+    ".kmap-node.is-filtered", ".kmap-node.is-near", ".kmap-node:active", ".kmap-node:hover",
+    ".kmap-svg.has-focus", ".kmap-swatch", ".kmap-index",
     ".kmap-section-title", ".kmap-count", ".kmap-entries", ".kmap-entry-button",
     ".kmap-entry.is-selected", ".kmap-new", ".kmap-panel", ".kmap-panel-hint", ".kmap-panel-nav",
     ".kmap-note-title", ".kmap-note-meta", ".kmap-tags", ".kmap-tag", ".kmap-heading",
@@ -142,11 +152,49 @@ def test_the_approvals_card_is_never_hidden_clipped_or_animated_away() -> None:
     assert "approval" not in KMAP_JS
 
 
-def test_map_keyframes_only_move_transform_opacity_and_dashoffset() -> None:
+def test_the_map_is_moulded_from_the_surface_and_reads_as_keys_without_fx() -> None:
+    # The floor is one smooth well: no dot grid, no dimple texture.
+    basin = _rule(CHROME, f"{SCOPE} .kmap-map")
+    assert "background-image" not in basin and "gradient" not in basin
+    assert "--neu-kmap-dimples" not in CHROME
+    # Without fx/: the ring is a surface-coloured key with a CSS drop-shadow pair; the dot a
+    # small flat LED of the category colour; N3's shine is gone; labels have no plate.
+    ring = _rule(CHROME, f"{SCOPE} .kmap-ring")
+    assert "fill: var(--neu-kmap-key)" in ring and ring.count("drop-shadow(") == 2
+    assert "var(--neu-kmap-shade)" in ring and "var(--neu-kmap-light)" in ring
+    dot = _rule(CHROME, f"{SCOPE} .kmap-dot")
+    assert "var(--neu-kmap-cat" in dot and "var(--neu-kmap-led-k)" in dot
+    assert "display: none" in _rule(CHROME, f"{SCOPE} .kmap-shine")
+    label = _rule(CHROME, f"{SCOPE} .kmap-label")
+    assert "stroke: none" in label and "filter: var(--neu-kmap-engrave)" in label
+    assert "--neu-kmap-label-plate" not in CHROME
+
+
+def test_selected_is_the_press_latched_and_states_rank_in_source_order() -> None:
+    lift = re.compile(r"--neu-kmap-lift:\s*var\((--neu-kmap-lift-[a-z]+)\)")
+    order = [(sel, m.group(1)) for sel, body in _rules(CHROME) if (m := lift.search(body))]
+    levels = [level for _, level in order]
+    assert levels == [
+        "--neu-kmap-lift-low",  # unrelated under focus, non-matches
+        "--neu-kmap-lift-up",  # neighbours, matches
+        "--neu-kmap-lift-up",  # hover
+        "--neu-kmap-lift-flush",  # press and selected: one rule, the same height
+    ]
+    press = order[-1][0]
+    assert ".kmap-node:active" in press and ".kmap-node.is-selected" in press
+    # Every state selector weighs the same (:where), so the order above is the priority.
+    assert all(f"{SCOPE} :where(" in sel for sel, _ in order)
+    # Selected carries only a hairline iris border.
+    assert re.search(r"--neu-kmap-hairline:\s*rgb\(81 70 216 / 0\.3\);", CHROME)
+    hairline = _rule(CHROME, f"{SCOPE} :where(.kmap-node.is-selected) .kmap-ring")
+    assert "var(--neu-kmap-hairline)" in hairline and "stroke-width: 0.75px" in hairline
+
+
+def test_map_keyframes_only_move_transform_opacity_dashoffset_and_custom_properties() -> None:
     blocks = re.findall(r"@keyframes (neumorph-kmap-[\w-]+) \{((?:[^{}]*\{[^{}]*\})*)\s*\}", FX)
     assert {name for name, _ in blocks} >= {
-        "neumorph-kmap-rise", "neumorph-kmap-socket", "neumorph-kmap-draw", "neumorph-kmap-trickle",
-        "neumorph-kmap-seat", "neumorph-kmap-ripple", "neumorph-kmap-breathe", "neumorph-kmap-page",
+        "neumorph-kmap-rise", "neumorph-kmap-swell", "neumorph-kmap-draw", "neumorph-kmap-ripple",
+        "neumorph-kmap-breathe", "neumorph-kmap-spark", "neumorph-kmap-page",
         "neumorph-kmap-lift",
     }  # fmt: skip
     for name, body in blocks:
@@ -161,33 +209,90 @@ def test_map_keyframes_only_move_transform_opacity_and_dashoffset() -> None:
         assert len(held) <= 1, name
 
 
-def test_channel_light_lip_is_one_filter_on_the_layer_not_one_per_line() -> None:
-    rules = dict(_rules(CHROME))
-    assert "filter: var(--neu-kmap-lip)" in rules[f"{SCOPE} .kmap-svg g:has(> .kmap-edge)"]
-    assert "filter" not in rules[f"{SCOPE} .kmap-edge"]
+def test_filters_are_static_one_pass_on_layers_never_per_line_or_animated() -> None:
+    chrome, fx = dict(_rules(CHROME)), dict(_rules(FX))
+    layer = f"{SCOPE} .kmap-svg g:has(> .kmap-edge)"
+    assert "filter: var(--neu-kmap-lip)" in chrome[layer]
+    # fx/ drops the layer filter: the carving is plain stroke copies under the edge layer, a shade
+    # layer and a light layer nudged one screen pixel (1/zoom) apart.
+    moulded = fx[f"{SCOPE} .kmap-svg.neumorph-kmap-moulded g:has(> .kmap-edge)"]
+    assert "filter: none" in moulded
+    carve = fx[f"{SCOPE} .neumorph-kmap-carve"]
+    assert "vector-effect: non-scaling-stroke" in carve and "var(--neu-kmap-groove-w)" in carve
+    tag_carve = fx[f'{SCOPE} .neumorph-kmap-carve[data-kind="tag"]']
+    assert "stroke-dasharray: 0.1 var(--neu-kmap-dimple)" in tag_carve
+    assert "insertBefore(carves, edgeLayer)" in KMAP_JS and "(1 / k)" in KMAP_JS
+    assert "filter" not in chrome[f"{SCOPE} .kmap-edge"]
+    # Moulded keys cast their shadow with discs moved by transform, not a filter.
+    assert "filter: none" in fx[f"{SCOPE} .kmap-svg.neumorph-kmap-moulded .kmap-ring"]
+    for css in (CHROME, FX):
+        for selector, body in _rules(css):
+            if ".kmap" in selector or "neumorph-kmap" in selector:
+                assert not re.search(r"transition[^;]*filter", body), selector
+
+
+def test_only_keys_in_play_ease_so_a_focus_change_repaints_the_map_once() -> None:
+    eased = [
+        sel
+        for sel, body in _rules(FX)
+        if "neumorph-kmap-shade" in sel and re.search(r"transition:\s*transform", body)
+    ]
+    assert len(eased) == 1
+    for state in (":hover", ".is-near", ".is-selected", ":active", "neumorph-kmap-settling"):
+        assert state in eased[0], state
+    # The pointer light turns only the two discs (not the whole key), frame by frame, uneased.
+    assert "neumorph-kmap-lit" not in FX and "for (const d of n.discs)" in KMAP_JS
+    # Map-wide changes (edges, nodes, labels) don't fade.
+    for selector, body in _rules(CHROME):
+        if re.search(r"\.kmap-(edge|node|label)\s*$", selector):
+            assert "transition" not in body, selector
+
+
+def test_every_lit_channel_draws_out_of_the_focused_note() -> None:
+    rules = dict(_rules(FX))
+    draw = rules[f"{SCOPE} .neumorph-kmap-flow"]
+    assert "animation: neumorph-kmap-draw var(--neu-dur-kmap-flow)" in draw
+    # Tag channels: one iris spark per dimple, each lit as the light reaches it.
+    spark = rules[f"{SCOPE} .neumorph-kmap-spark"]
+    assert "animation: neumorph-kmap-spark" in spark
+    assert "animation-delay: calc(var(--neu-dur-kmap-flow) * var(--neu-kmap-t))" in spark
+    assert "DIMPLE_PX = 11;" in KMAP_JS and re.search(r"--neu-kmap-dimple:\s*11px;", CHROME)
+    # The light starts at the focused note's end of the groove.
+    assert "edge.dataset.source === focus" in KMAP_JS
 
 
 def test_kmap_fx_is_decoration_only() -> None:
     banned = [
         "fetch(", "XMLHttpRequest", "/api/", "http://", "https://", "localStorage",
         "sessionStorage", "document.cookie", "innerHTML", "outerHTML", "insertAdjacent",
-        "textContent", "innerText",
+        "textContent", "innerText", "createTextNode",
         "preventDefault", "stopPropagation", "location", "eval(", "import(", "postMessage",
-        "setAttribute(\"style\"", "cloneNode",
+        "setAttribute(\"style\"", "cloneNode", ".title", "dataset.title",
     ]  # fmt: skip
     for name in banned:
         assert name not in KMAP_JS, name
-    # Styles only through CSSOM custom properties.
+    # Even the SVG namespace is read from the map (svg.namespaceURI), not written out.
+    assert re.findall(r"https?:", KMAP_JS) == []
+    # Styles only through CSSOM.
     assert "style.setProperty(" in KMAP_JS
     assert not re.search(r"\.style\.(?!setProperty|removeProperty)[a-zA-Z]+", KMAP_JS)
     # Every listener it adds to the map is passive; it never blocks a gesture.
     adds = re.findall(r"svg\.addEventListener\(([^)]*)\)", KMAP_JS)
     assert adds and all("passive: true" in a for a in adds)
-    # Its own decor is empty and hidden from assistive tech.
+    # Its own decor is empty and hidden from assistive tech: every SVG part goes through decor()
+    # (one aria-hidden), the ripple div is the other; one flow layer.
     assert KMAP_JS.count('setAttribute("aria-hidden", "true")') == 2
+    assert KMAP_JS.count('decor("g", FLOWS)') == 1
+    assert KMAP_JS.count("document.createElement(") == 1
+    # Flat fills only: no paint servers, filters, masks or ids of its own (an OS may not url()).
+    assert "url(" not in KMAP_JS and '"id"' not in KMAP_JS
+    for tag in ("defs", "filter", "mask", "Gradient", "pattern"):
+        assert f'"{tag}' not in KMAP_JS, tag
     # Frames only on demand, none while the tab is hidden.
     assert "requestAnimationFrame" in KMAP_JS and "setInterval(" not in KMAP_JS
     assert "visibilitychange" in KMAP_JS and "document.hidden" in KMAP_JS
+    # The pointer light leaves a latched (selected) key alone.
+    assert 'classList.contains("is-selected")' in KMAP_JS
 
 
 def test_kmap_fx_runs_only_with_motion_allowed() -> None:
@@ -199,4 +304,8 @@ def test_kmap_fx_runs_only_with_motion_allowed() -> None:
     reduced = FX.split("@media (prefers-reduced-motion: reduce)", 1)[1]
     for token in re.findall(r"(--neu-dur-kmap-[a-z]+):", CHROME):
         assert f"{token}: 0ms;" in reduced, token
-    assert ".neumorph-kmap-light {\n    display: none;" in reduced
+    for selector in (
+        ".neumorph-kmap-flow,", ".neumorph-kmap-spark,",
+        ".kmap-svg.neumorph-kmap-opening .kmap-node", ".neumorph-kmap-ripple",
+    ):  # fmt: skip
+        assert selector in reduced, selector

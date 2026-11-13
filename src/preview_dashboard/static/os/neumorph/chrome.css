@@ -94,10 +94,10 @@
   --neu-dur-pop: 380ms;
   --neu-dur-splash: 560ms;
   --neu-dur-breathe: 9s;
-  /* Knowledge map: pearls rise in a wave, channels draw and fill, the basin ripples once. */
+  /* Knowledge map: keys rise in a wave, grooves draw, channel light draws, the floor ripples once. */
   --neu-dur-kmap-rise: 560ms;
   --neu-dur-kmap-draw: 620ms;
-  --neu-dur-kmap-flow: 600ms;
+  --neu-dur-kmap-flow: 900ms;
   --neu-dur-kmap-ripple: 900ms;
   --neu-dur-kmap-seat: 420ms;
   --neu-dur-kmap-page: 300ms;
@@ -159,35 +159,48 @@
   /* The basin: a deep moulded well, several inner steps so its floor reads lower than any list. */
   --neu-kmap-basin: inset 14px 14px 30px rgb(138 153 178 / 0.55), inset -12px -12px 28px rgb(255 255 255 / 0.95), inset 4px 4px 9px rgb(150 164 188 / 0.45), inset -2px -2px 4px rgb(255 255 255 / 0.8), inset 1px 1px 1px rgb(150 164 188 / 0.35);
   --neu-kmap-basin-ring: inset 0 0 0 3px var(--color-focus);
-  /* Embossed dimples on the floor: a shade dot with a light lip one pixel down-right of it. */
-  --neu-kmap-dimples: radial-gradient(circle, rgb(140 155 182 / 0.26) 0 1.3px, rgb(140 155 182 / 0.08) 2.2px, rgb(140 155 182 / 0) 3px), radial-gradient(circle, rgb(255 255 255 / 0.9) 0 1.5px, rgb(255 255 255 / 0) 3px);
-  --neu-kmap-dimple-size: 32px 32px;
-  --neu-kmap-dimple-at: 0 0, 1.5px 1.5px;
-  /* Pearls: a porcelain dome (the dot's stroke) round a category core (its fill), lit up-left. */
-  --neu-kmap-dome: #f2f5fa;
-  --neu-kmap-pearl: drop-shadow(-1.5px -1.5px 1.2px rgb(255 255 255 / 1)) drop-shadow(2px 2.5px 2.2px rgb(102 118 150 / 0.55));
-  --neu-kmap-socket: rgb(132 148 176 / 0.3);
-  --neu-kmap-socket-lip: rgb(255 255 255 / 0.85);
-  --neu-kmap-shine: rgb(255 255 255 / 0.78);
-  --neu-kmap-k: 1.2;
-  --neu-kmap-socket-k: 1;
-  --neu-kmap-lean: 5px;
-  --neu-kmap-lx: 0;
-  --neu-kmap-ly: 0;
-  --neu-kmap-glint: 0;
-  /* Iris light: the selected note's ring, its channels, recent notes and search matches. */
+  /* Keys: every note is a porcelain key pressed out of the floor (the ring, scaled by --neu-kmap-k
+     over the layout radius) with its category as a small LED at the centre (the dot, scaled down
+     by --neu-kmap-led-k; fx/kmap.js sets the exact ratio per key). */
+  --neu-kmap-k: 1.15;
+  --neu-kmap-led-k: 0.45;
+  --neu-kmap-key: #e9edf3;
+  --neu-kmap-rim: rgb(255 255 255 / 0.75);
+  --neu-kmap-led-off: #d3d9e3;
+  /* Height of a key: its shadow pair is --neu-kmap-throw x lift away, --neu-kmap-soft x lift
+     soft. The shade falls along (--neu-kmap-sx, --neu-kmap-sy), the light opposite; the room light
+     is up-left (1, 1); fx/kmap.js swings it away from the pointer. */
+  --neu-kmap-shade: var(--neu-shade);
+  --neu-kmap-light: var(--neu-light);
+  --neu-kmap-throw: 2.4px;
+  --neu-kmap-soft: 2.8px;
+  --neu-kmap-sx: 1;
+  --neu-kmap-sy: 1;
+  --neu-kmap-lift: 1;
+  --neu-kmap-lift-up: 1.8;
+  --neu-kmap-lift-low: 0.22;
+  --neu-kmap-lift-flush: 0.16;
+  /* Iris light: the selected key's hairline, its grooves' light, search matches. */
   --neu-kmap-iris: rgb(81 70 216 / 1);
-  --neu-kmap-iris-halo: rgb(81 70 216 / 0.16);
-  --neu-kmap-recent: rgb(81 70 216 / 0.55);
-  --neu-kmap-match: rgb(81 70 216 / 0.24);
-  /* Channels: an engraved groove (shade stroke + a light lip filtered onto the whole layer). */
-  --neu-kmap-groove: #a3b0c5;
-  --neu-kmap-groove-tag: #9eacc2;
+  --neu-kmap-hairline: rgb(81 70 216 / 0.3);
+  --neu-kmap-match: rgb(81 70 216 / 0.5);
+  /* Grooves: a wide floor-dark stroke carved into the floor; tag links a row of dimples (round
+     caps on near-zero dashes, --neu-kmap-dimple apart). Without fx/ a light lip on the whole
+     layer stands in for the carving filter. */
+  --neu-kmap-groove: #d3dae5;
+  --neu-kmap-groove-lit: #c3c3ec;
+  --neu-kmap-groove-w: 6px;
+  --neu-kmap-dimple: 11px;
   --neu-kmap-lip: drop-shadow(1px 1px 0 rgb(255 255 255 / 1));
-  --neu-kmap-label-plate: #e9edf4;
-  /* Domed swatches and key pips: a highlight up-left over the category colour, a crisp foot. */
+  /* Labels: ink engraved in the floor (a light edge down-right; em, so it stays 1px at any zoom). */
+  --neu-kmap-engrave: drop-shadow(0.08em 0.08em 0 rgb(255 255 255 / 0.95));
+  /* Index LEDs (swatches, key pips): a glass bead in a concave socket, as on the map. */
+  --neu-kmap-led-bead: 3.5px;
+  --neu-kmap-led-glass: radial-gradient(circle at 42% 40%, rgb(255 255 255 / 0.62) 0, rgb(255 255 255 / 0) 2.2px);
+  --neu-kmap-socket: linear-gradient(135deg, #d6dce6, #edf1f6);
+  --neu-kmap-socket-walls: inset 1.5px 1.5px 2px var(--neu-shade-deep), inset -1.5px -1.5px 2px var(--neu-light);
+  /* The note panel's hint pearl: a highlight up-left; selected list keys: an iris rim. */
   --neu-kmap-gem: radial-gradient(circle at 34% 30%, rgb(255 255 255 / 0.85) 0, rgb(255 255 255 / 0) 52%);
-  --neu-kmap-gem-shadow: 1.5px 1.5px 3px rgb(120 136 166 / 0.7), -1px -1px 2px rgb(255 255 255 / 1), inset -1.5px -1.5px 2px rgb(20 24 60 / 0.28);
   --neu-kmap-key-rim: inset 0 0 0 2px rgb(81 70 216 / 0.55);
   /* Approval code cells: digit pitch, the spacing that centres a digit in it, engraved dividers. */
   --neu-kmap-cell: 2.3ch;
@@ -1393,12 +1406,13 @@
   box-shadow: var(--neu-raise-lg);
 }
 
-/* --- knowledge map (N3): Claudia's memory as a porcelain basin. The floor is a deep moulded well
-   with embossed dimples; notes are pearls (a porcelain dome round a category core) seated in
-   sockets; links are engraved channels; index, note and approvals are slabs, wells and keys.
-   Hover lifts a pearl, press seats it, select rings it with iris light; every state reads
-   without motion. fx/kmap.js + fx/fx.css add the pointer light, the opening wave, the ripple
-   and the iris flow along the channels; nothing here needs them. --- */
+/* --- knowledge map (N3, N4): Claudia's memory moulded from the surface. The floor is one deep
+   smooth well; notes are porcelain keys pressed out of it with a category LED at the centre;
+   links are grooves cut into it; index, note and approvals are slabs, wells and keys. Hover
+   lifts a key, press drops it flush, select latches the press; every state reads without
+   motion. fx/kmap.js + fx/fx.css add the moulding (shadow discs, sockets, LED glass, the groove
+   filter), the opening wave, the channel light, the ripple and the pointer light; nothing here
+   needs them. --- */
 
 :root[data-os="neumorph"] .kmap-controls {
   gap: var(--space-3);
@@ -1415,10 +1429,7 @@
   padding: 0;
   border: 0;
   border-radius: var(--neu-radius-well);
-  background-color: var(--color-surface);
-  background-image: var(--neu-kmap-dimples);
-  background-position: var(--neu-kmap-dimple-at);
-  background-size: var(--neu-kmap-dimple-size);
+  background: var(--color-surface);
   box-shadow: var(--neu-kmap-basin);
 }
 
@@ -1471,192 +1482,141 @@
   box-shadow: var(--neu-well);
 }
 
-/* Channels: an engraved groove; the light lip is one drop-shadow on the whole layer (one filter
-   pass, not one per line). Tag links are a dotted engraving (round caps on near-zero dashes).
-   The layer has no neutral hook, so it is found by what it holds. */
+/* Grooves: a wide floor-dark stroke cut into the floor; tag links a row of round dimples. The
+   strokes keep their screen width at any zoom (app.css: non-scaling). Without fx/ the carving is
+   a light lip on the whole layer (one filter pass, not one per line); fx/ swaps it for an inner
+   shadow. The layer has no neutral hook, so it is found by what it holds. */
 :root[data-os="neumorph"] .kmap-svg g:has(> .kmap-edge) {
   filter: var(--neu-kmap-lip);
 }
 
 :root[data-os="neumorph"] .kmap-edge {
   stroke: var(--neu-kmap-groove);
-  stroke-width: 2px;
+  stroke-width: var(--neu-kmap-groove-w);
   stroke-linecap: round;
-  transition: opacity var(--neu-dur-release) var(--neu-ease-out);
 }
 
 :root[data-os="neumorph"] .kmap-edge[data-kind="tag"] {
-  stroke: var(--neu-kmap-groove-tag);
-  stroke-width: 2.6px;
-  stroke-dasharray: 0.1 6;
+  stroke-dasharray: 0.1 var(--neu-kmap-dimple);
 }
 
+/* The focused note's grooves: a faint iris tint here; fx/ keeps them floor-dark and draws a line
+   of iris light inside them instead. */
 :root[data-os="neumorph"] .kmap-edge.is-near {
-  stroke: var(--neu-kmap-iris);
-  stroke-width: 2.6px;
-}
-
-:root[data-os="neumorph"] .kmap-edge.is-near[data-kind="tag"] {
-  stroke-width: 3.4px;
+  stroke: var(--neu-kmap-groove-lit);
 }
 
 :root[data-os="neumorph"] .kmap-svg.has-focus .kmap-edge:not(.is-near) {
-  opacity: 0.3;
+  opacity: 0.45;
 }
 
 :root[data-os="neumorph"] .kmap-svg.has-focus .kmap-edge.is-filtered,
 :root[data-os="neumorph"] .kmap-edge.is-filtered {
-  opacity: 0.12;
+  opacity: 0.25;
 }
 
-/* Pearls. Each part is drawn round its node's origin (the g carries the position, so the g
-   itself never gets a CSS transform); the parts scale together by --neu-kmap-k, which every
-   state below sets on the node. */
-:root[data-os="neumorph"] .kmap-node {
-  transition: opacity var(--neu-dur-release) var(--neu-ease-out);
+/* Keys. Each part is drawn round its node's origin (the g carries the position, so the g itself
+   never gets a CSS transform) and scales by --neu-kmap-k. The key's height is one number,
+   --neu-kmap-lift, which the states below set on the node; here it drives a CSS drop-shadow
+   pair (static, never transitioned). fx/ replaces that pair with moulded shadow discs.
+   Focus and filter changes restyle the whole map at once, so nothing map-wide fades: the
+   grooves, keys and labels change in one step (one repaint, not 300ms of them on 150 notes). */
+
+/* Unrelated and filtered keys stay solid: they sink flush instead of fading (app.css fades). */
+:root[data-os="neumorph"] .kmap-svg.has-focus .kmap-node:not(.is-near),
+:root[data-os="neumorph"] .kmap-svg .kmap-node.is-filtered {
+  opacity: 1;
 }
 
 :root[data-os="neumorph"] .kmap-ring,
 :root[data-os="neumorph"] .kmap-dot {
   transform-box: view-box;
   transform-origin: 0 0;
-  transition: transform var(--neu-dur-release) var(--neu-ease-settle);
 }
 
-/* The socket the pearl sits in: a soft hollow of shade round its foot. */
 :root[data-os="neumorph"] .kmap-ring {
-  fill: var(--neu-kmap-socket);
-  stroke: none;
-  transform: scale(calc(var(--neu-kmap-k) * var(--neu-kmap-socket-k)));
-}
-
-/* The pearl: the stroke is the porcelain dome, the fill its category core; lit up-left. The
-   stroke scales with the map (vector-effect none) so dome and core keep their proportion. */
-:root[data-os="neumorph"] .kmap-dot {
-  fill: var(--neu-kmap-cat, var(--kmap-c7));
-  stroke: var(--neu-kmap-dome);
-  stroke-width: 2.6px;
-  vector-effect: none;
-  filter: var(--neu-kmap-pearl);
+  fill: var(--neu-kmap-key);
+  stroke: var(--neu-kmap-rim);
+  stroke-width: 1px;
+  stroke-dasharray: none;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(calc(var(--neu-kmap-throw) * var(--neu-kmap-sx) * var(--neu-kmap-lift)) calc(var(--neu-kmap-throw) * var(--neu-kmap-sy) * var(--neu-kmap-lift)) calc(var(--neu-kmap-soft) * var(--neu-kmap-lift)) var(--neu-kmap-shade)) drop-shadow(calc(var(--neu-kmap-throw) * var(--neu-kmap-sx) * var(--neu-kmap-lift) * -1) calc(var(--neu-kmap-throw) * var(--neu-kmap-sy) * var(--neu-kmap-lift) * -1) calc(var(--neu-kmap-soft) * var(--neu-kmap-lift)) var(--neu-kmap-light));
   transform: scale(var(--neu-kmap-k));
 }
 
-/* The specular highlight. It rests up-left (the room light); fx/kmap.js leans it toward the
-   pointer (--neu-kmap-lx/-ly, -1..1) and brightens it (--neu-kmap-glint) for nearby pearls. */
+/* The LED: the category colour, small, at the key's centre (fx/ gives it glass and a socket). */
+:root[data-os="neumorph"] .kmap-dot {
+  fill: var(--neu-kmap-cat, var(--kmap-c7));
+  stroke: none;
+  transform: scale(calc(var(--neu-kmap-k) * var(--neu-kmap-led-k)));
+}
+
+/* N3's specular shine has no place on a matte key. */
 :root[data-os="neumorph"] .kmap-shine {
-  display: inline;
-  fill: var(--neu-kmap-shine);
-  opacity: calc(0.72 + var(--neu-kmap-glint) * 0.28);
-  pointer-events: none;
-  transform-box: view-box;
-  transform-origin: 0 0;
-  transform: scale(var(--neu-kmap-k)) translate(calc(var(--neu-kmap-lx) * var(--neu-kmap-lean)), calc(var(--neu-kmap-ly) * var(--neu-kmap-lean)));
-  transition: transform var(--neu-dur-release) var(--neu-ease-out);
+  display: none;
 }
 
-/* States, lowest to highest priority (equal specificity, so source order decides). */
-/* Unrelated notes sink flush: they fade and lose their cast shadow (no scale change, so a
-   hover on a 150-note map restyles only the few pearls that move). */
-:root[data-os="neumorph"] .kmap-svg.has-focus .kmap-node:not(.is-near) {
-  opacity: 0.34;
+/* States: each sets the key's height (and its LED) on the node. Every selector has the same
+   weight (:where), so source order is the priority, lowest first:
+   unrelated / filtered < neighbour / match < hover < press < selected. */
+:root[data-os="neumorph"] :where(.kmap-svg.has-focus .kmap-node:not(.is-near):not(:hover), .kmap-svg .kmap-node.is-filtered) {
+  --neu-kmap-lift: var(--neu-kmap-lift-low);
 }
 
-:root[data-os="neumorph"] .kmap-svg.has-focus .kmap-node:not(.is-near) .kmap-dot {
-  filter: none;
-}
-
-:root[data-os="neumorph"] .kmap-svg.has-focus .kmap-node.is-near {
-  --neu-kmap-k: 1.32;
-}
-
-/* Neighbours rise one after another (fx/kmap.js sets --neu-kmap-nd by distance). */
-:root[data-os="neumorph"] .kmap-svg.has-focus .kmap-node.is-near .kmap-dot,
-:root[data-os="neumorph"] .kmap-svg.has-focus .kmap-node.is-near .kmap-ring {
-  transition-delay: var(--neu-kmap-nd);
-}
-
-/* A search or category filter: matches rise and glow, the rest sink flush with the floor. */
-:root[data-os="neumorph"] .kmap-svg:has(.kmap-node.is-filtered) .kmap-node:not(.is-filtered) {
-  --neu-kmap-k: 1.3;
-  --neu-kmap-socket-k: 1.16;
-}
-
-:root[data-os="neumorph"] .kmap-svg .kmap-node.is-filtered:not(.is-selected) {
-  opacity: 0.2;
-}
-
-:root[data-os="neumorph"] .kmap-svg .kmap-node.is-filtered:not(.is-selected) .kmap-dot {
-  filter: none;
+:root[data-os="neumorph"] :where(.kmap-svg.has-focus .kmap-node.is-near, .kmap-svg:has(.kmap-node.is-filtered) .kmap-node:not(.is-filtered)) {
+  --neu-kmap-lift: var(--neu-kmap-lift-up);
 }
 
 @media (hover: hover) {
-  :root[data-os="neumorph"] .kmap-svg .kmap-node:hover:not(.is-filtered) {
-    --neu-kmap-k: 1.42;
-    --neu-kmap-socket-k: 1.14;
+  :root[data-os="neumorph"] :where(.kmap-svg .kmap-node:hover:not(.is-filtered)) {
+    --neu-kmap-lift: var(--neu-kmap-lift-up);
   }
 }
 
-/* Press: the pearl gives, sinking into its socket (quick, like a key). */
-:root[data-os="neumorph"] .kmap-svg .kmap-node:active:not(.is-filtered) {
-  --neu-kmap-k: 1.08;
-  --neu-kmap-socket-k: 1.04;
+/* Press: the key drops flush with the floor. Selected is that press, latched. */
+:root[data-os="neumorph"] :where(.kmap-svg .kmap-node:active, .kmap-svg .kmap-node.is-selected) {
+  --neu-kmap-lift: var(--neu-kmap-lift-flush);
 }
 
-:root[data-os="neumorph"] .kmap-svg .kmap-node:active .kmap-dot,
-:root[data-os="neumorph"] .kmap-svg .kmap-node:active .kmap-ring {
-  transition-duration: var(--neu-dur-press);
-  transition-timing-function: var(--neu-ease-press);
+/* Selected: only a hairline iris border (no ring, no glow) and an iris label. */
+:root[data-os="neumorph"] :where(.kmap-node.is-selected) .kmap-ring {
+  stroke: var(--neu-kmap-hairline);
+  stroke-width: 0.75px;
 }
 
-/* Selected: seated a little proud of its neighbours, ringed with iris light. */
-:root[data-os="neumorph"] .kmap-svg .kmap-node.is-selected:not(:active) {
-  --neu-kmap-k: 1.4;
-  --neu-kmap-socket-k: 1.22;
-  opacity: 1;
+/* Recent: the LED glows (fx/ makes it breathe). */
+:root[data-os="neumorph"] :where(.kmap-node.is-recent) .kmap-dot {
+  filter: drop-shadow(0 0 3px var(--neu-kmap-cat, var(--kmap-c7)));
 }
 
-:root[data-os="neumorph"] .kmap-node.is-recent .kmap-ring {
-  stroke: var(--neu-kmap-recent);
-  stroke-width: 1.6px;
-  stroke-dasharray: none;
+/* Unrelated under focus, and non-matches: the LED goes dark and the label fades back. */
+:root[data-os="neumorph"] :where(.kmap-svg.has-focus .kmap-node:not(.is-near):not(:hover), .kmap-svg .kmap-node.is-filtered:not(.is-selected)) .kmap-dot {
+  fill: var(--neu-kmap-led-off);
+  filter: none;
 }
 
-:root[data-os="neumorph"] .kmap-svg:has(.kmap-node.is-filtered) .kmap-node:not(.is-filtered) .kmap-ring {
-  fill: var(--neu-kmap-match);
-  stroke: var(--neu-kmap-recent);
-  stroke-width: 1.4px;
-  vector-effect: non-scaling-stroke;
+:root[data-os="neumorph"] :where(.kmap-svg.has-focus .kmap-node:not(.is-near):not(:hover), .kmap-svg .kmap-node.is-filtered:not(.is-selected)) .kmap-label {
+  opacity: 0.45;
 }
 
-:root[data-os="neumorph"] .kmap-node.is-selected .kmap-ring {
-  fill: var(--neu-kmap-iris-halo);
-  stroke: var(--neu-kmap-iris);
-  stroke-width: 2.6px;
-  vector-effect: non-scaling-stroke;
-}
-
-/* Labels: ink on a soft plate of slightly lighter porcelain (painted under the glyphs), set
-   just clear of the largest pearl state. */
+/* Labels: ink engraved in the floor (a 1px light edge down-right), no plate; set just clear of
+   the key below it. */
 :root[data-os="neumorph"] .kmap-label {
   fill: var(--color-text);
-  font-weight: var(--font-weight-medium);
+  font-weight: var(--font-weight-strong);
   font-kerning: normal;
   text-rendering: geometricPrecision;
-  paint-order: stroke fill;
-  stroke: var(--neu-kmap-label-plate);
-  stroke-width: 0.36em;
-  stroke-linejoin: round;
-  stroke-opacity: 1;
+  stroke: none;
+  filter: var(--neu-kmap-engrave);
   letter-spacing: normal;
-  transform: translateY(0.5em);
+  transform: translateY(0.45em);
 }
 
 :root[data-os="neumorph"] .kmap-node.is-selected .kmap-label {
   fill: var(--color-accent);
-  font-weight: var(--font-weight-strong);
 }
 
-/* Category colours: one private --neu-kmap-cat per slot, read by the core, the swatch and the
+/* Category colours: one private --neu-kmap-cat per slot, read by the LED, the swatch and the
    index keys' pips. */
 :root[data-os="neumorph"] .kmap-node[data-cat="0"],
 :root[data-os="neumorph"] .kmap-node[data-cat="0"] .kmap-dot,
@@ -1714,14 +1674,15 @@
   --neu-kmap-cat: var(--kmap-c7);
 }
 
-/* Swatches are little domed pearls of the category colour. */
+/* Swatches are the map's LEDs: a lit glass bead of the category colour in a small concave
+   socket (layers: highlight, bead, socket floor; the socket's walls are the inset shadows). */
 :root[data-os="neumorph"] .kmap-swatch {
   width: 0.875rem;
   height: 0.875rem;
   border: 0;
   border-radius: 50%;
-  background: var(--neu-kmap-gem), var(--neu-kmap-cat, var(--kmap-c7));
-  box-shadow: var(--neu-kmap-gem-shadow);
+  background: var(--neu-kmap-led-glass), radial-gradient(circle, var(--neu-kmap-cat, var(--kmap-c7)) 0 var(--neu-kmap-led-bead), transparent calc(var(--neu-kmap-led-bead) + 0.6px)), var(--neu-kmap-socket);
+  box-shadow: var(--neu-kmap-socket-walls);
 }
 
 /* --- the index (List view; the whole map on phones): a well of soft keys by category --- */
@@ -1773,18 +1734,19 @@
   transition: box-shadow var(--neu-dur-release) var(--neu-ease-settle), transform var(--neu-dur-release) var(--neu-ease-settle);
 }
 
-/* A small domed pip in the note's category colour: the key is the pearl's twin. */
+/* The note's LED in its socket, as on the map's key: the list key is the map key's twin. */
 :root[data-os="neumorph"] .kmap-entry-button::before {
+  --neu-kmap-led-bead: 3px;
   content: "";
   position: absolute;
   top: 50%;
   left: var(--space-3);
-  width: 9px;
-  height: 9px;
-  margin-top: -4.5px;
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
   border-radius: 50%;
-  background: var(--neu-kmap-gem), var(--neu-kmap-cat, var(--kmap-c7));
-  box-shadow: var(--neu-kmap-gem-shadow);
+  background: var(--neu-kmap-led-glass), radial-gradient(circle, var(--neu-kmap-cat, var(--kmap-c7)) 0 var(--neu-kmap-led-bead), transparent calc(var(--neu-kmap-led-bead) + 0.6px)), var(--neu-kmap-socket);
+  box-shadow: var(--neu-kmap-socket-walls);
 }
 
 :root[data-os="neumorph"] .kmap-entry-button:hover {
