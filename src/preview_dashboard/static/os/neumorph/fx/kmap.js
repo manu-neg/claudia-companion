@@ -1,12 +1,12 @@
 /*
   Knowledge-map moulding and motion for Neumorph (docs/frontend-os.md#neumorph "Knowledge map"):
-  dresses every note as a porcelain key (a face with dome and socket, a glint on the LED; its one
-  soft shadow is chrome's), carves the grooves, draws iris light along the focused note's grooves
-  out of it, ripples the floor on select, plays the opening wave and makes the pointer a light
-  source that turns each nearby key's shadow. Reads only
-  the map's neutral hooks and geometry; writes CSS custom properties (CSSOM), OS-prefixed classes
-  and its own empty aria-hidden decor. No text, no item data, no prevented events; the approvals
-  card is untouched.
+  dresses every note as the approved mockup's porcelain key (convex face, gradient rim, concave
+  socket, blurred LED halo, lit LED glass, painted by one shared aria-hidden <defs>; its one soft
+  shadow is chrome's), carves the grooves, draws iris light along the focused note's grooves out
+  of it, ripples the floor on select, plays the opening wave and makes the pointer a light source
+  that turns each nearby key's shadow. Reads only the map's neutral hooks and geometry; writes CSS
+  custom properties (CSSOM), OS-prefixed classes and its own empty aria-hidden decor. No text, no
+  item data, no prevented events; the approvals card is untouched.
 */
 
 const MOULDED = "neumorph-kmap-moulded";
@@ -32,17 +32,56 @@ const SETTLE_MS = 420; // a let-go key keeps its easing this long (> --neu-dur-r
 const DIMPLE_PX = 11; // tag dimple pitch, = --neu-kmap-dimple (chrome.css)
 const SPARK_PX = 1.5; // radius of a lit dimple, on screen
 
-// A key's proportions over the layout radius r (knowledge-map.js draws the ring at r + 4), as
-// fractions of the key: the mockup's socket 1/2, halo .44, LED .3. Few elements per key on
-// purpose: a state change restyles every part of every key, so each part is one circle. The
-// socket's wall is its stroke. The key's shadow is no part of its own: it is the ring's soft
-// drop-shadow pair (chrome.css), so a key is one key with one shadow.
+// A key's face is the approved mockup's key, drawn at the mockup's own size (a 21-unit key) and
+// scaled to each key (knowledge-map.js draws the ring at r + 4), so its gradients, rim, blur and
+// inset shading keep the mockup's proportions on every key at every zoom. The LED is the map's
+// own dot, sized to the mockup's 6.3. The key's shadow is no part of the face: it is the ring's
+// soft drop-shadow pair (chrome.css), so a key is one key with one shadow.
 const KEY_PAD = 4;
-const DOME = { r: 0.8, at: -0.1 };
-const SOCKET = { r: 0.465, wall: 0.07, lip: 0.04 };
-const HALO = 0.44;
-const LED = 0.3;
-const GLINT = { r: 0.085, at: -0.075 };
+const FACE = { key: 21, rim: 20.4, rimW: 1.2, socket: 10.5, halo: 8.8, led: 6.3 };
+
+// The mockup's paint servers, its values copied as they are: the convex key, the gradient rim,
+// the concave socket and its inset shading (shade up-left, light down-right, inside the shape),
+// the LED's blurred halo and the light on the LED's glass. One of each in one aria-hidden <defs>,
+// shared by every key (a filter per key janked N4). Ids are namespaced; nothing else is
+// referenced (an OS loads nothing: only these in-document fragments).
+const PAINT = [
+  ["linearGradient", { id: "neumorph-kmap-convex", x1: 0, y1: 0, x2: 1, y2: 1 }, [
+    ["stop", { offset: 0, "stop-color": "#eff3f8" }],
+    ["stop", { offset: 1, "stop-color": "#dce2eb" }],
+  ]],
+  ["linearGradient", { id: "neumorph-kmap-concave", x1: 0, y1: 0, x2: 1, y2: 1 }, [
+    ["stop", { offset: 0, "stop-color": "#d9dfe8" }],
+    ["stop", { offset: 1, "stop-color": "#ebeff5" }],
+  ]],
+  ["linearGradient", { id: "neumorph-kmap-rim", x1: 0, y1: 0, x2: 1, y2: 1 }, [
+    ["stop", { offset: 0, "stop-color": "#ffffff", "stop-opacity": 0.95 }],
+    ["stop", { offset: 0.5, "stop-color": "#ffffff", "stop-opacity": 0 }],
+    ["stop", { offset: 1, "stop-color": "#96a4bc", "stop-opacity": 0.35 }],
+  ]],
+  ["radialGradient", { id: "neumorph-kmap-ledlight", cx: 0.36, cy: 0.34, r: 0.7 }, [
+    ["stop", { offset: 0, "stop-color": "#ffffff", "stop-opacity": 0.5 }],
+    ["stop", { offset: 0.45, "stop-color": "#ffffff", "stop-opacity": 0 }],
+    ["stop", { offset: 1, "stop-color": "#000000", "stop-opacity": 0.22 }],
+  ]],
+  ["filter", { id: "neumorph-kmap-inset", x: "-30%", y: "-30%", width: "160%", height: "160%", "color-interpolation-filters": "sRGB" }, [
+    ["feComponentTransfer", { in: "SourceAlpha", result: "inv" }, [["feFuncA", { type: "table", tableValues: "1 0" }]]],
+    ["feOffset", { in: "inv", dx: 1.6, dy: 1.6, result: "o1" }],
+    ["feGaussianBlur", { in: "o1", stdDeviation: 1.3, result: "b1" }],
+    ["feFlood", { "flood-color": "#8a99b2", "flood-opacity": 0.85 }],
+    ["feComposite", { operator: "in", in2: "b1" }],
+    ["feComposite", { operator: "in", in2: "SourceAlpha", result: "shade" }],
+    ["feOffset", { in: "inv", dx: -1.4, dy: -1.4, result: "o2" }],
+    ["feGaussianBlur", { in: "o2", stdDeviation: 1.2, result: "b2" }],
+    ["feFlood", { "flood-color": "#ffffff", "flood-opacity": 1 }],
+    ["feComposite", { operator: "in", in2: "b2" }],
+    ["feComposite", { operator: "in", in2: "SourceAlpha", result: "light" }],
+    ["feMerge", {}, [["feMergeNode", { in: "SourceGraphic" }], ["feMergeNode", { in: "shade" }], ["feMergeNode", { in: "light" }]]],
+  ]],
+  ["filter", { id: "neumorph-kmap-bloom", x: "-100%", y: "-100%", width: "300%", height: "300%" }, [
+    ["feGaussianBlur", { stdDeviation: 2.2 }],
+  ]],
+];
 
 // The SVG namespace, taken from the map itself (watchMap sets it before building anything).
 let svgNs = "";
@@ -56,15 +95,27 @@ function decor(tag, className, attrs = {}) {
   return el;
 }
 
-/** A circle of radius r (in keys) at (at, at) keys from the node's origin, stroke w keys. */
-function disc(className, key, r, at = 0, w = 0) {
-  const attrs = { r: (r * key).toFixed(2) };
-  if (at) {
-    attrs.cx = (at * key).toFixed(2);
-    attrs.cy = (at * key).toFixed(2);
-  }
-  if (w) attrs["stroke-width"] = (w * key).toFixed(2);
-  return decor("circle", className, attrs);
+/** One part of the paint-server tree (inside the hidden <defs>, so no aria of its own). */
+function paint([tag, attrs, children = []]) {
+  const el = document.createElementNS(svgNs, tag);
+  for (const [name, value] of Object.entries(attrs)) el.setAttribute(name, String(value));
+  for (const child of children) el.appendChild(paint(child));
+  return el;
+}
+
+/** The map's one <defs> of paint servers, first in the svg; reused if it is already there. */
+function paintServers(svg) {
+  const found = svg.querySelector(":scope > .neumorph-kmap-paint");
+  if (found) return found;
+  const defs = decor("defs", "neumorph-kmap-paint");
+  for (const server of PAINT) defs.appendChild(paint(server));
+  svg.insertBefore(defs, svg.firstChild);
+  return defs;
+}
+
+/** A face part: a mockup circle of radius r (mockup units), painted by attributes. */
+function part(className, r, attrs = {}) {
+  return decor("circle", className, { r, ...attrs });
 }
 
 /** Position of a node group (its translate), in map units. */
@@ -98,6 +149,7 @@ function watchMap(svg, finePointer, motion) {
   const edgeLayer = svg.querySelector(".kmap-edges");
   if (!map || !viewport || !nodeLayer || !edgeLayer) return () => {};
   svgNs = svg.namespaceURI;
+  const defs = paintServers(svg);
 
   const nodes = new Map(); // g -> { id, x, y, sx, sy, ring }
   const byId = new Map(); // note id -> g
@@ -171,9 +223,11 @@ function watchMap(svg, finePointer, motion) {
     return true;
   }
 
-  // A key: on the ring a face (dome, lip, socket) under the LED and a glint on the LED. The LED's
-  // halo is its own stroke (fx.css), as wide as --neu-kmap-halo-w. Returns the ring (the key's
-  // shadow, which the pointer light turns), or null for a key it can't dress.
+  // A key, element for element as the mockup: over the ring (the key's shadow) a face of the
+  // convex key, its gradient rim, the concave socket with its inset shading and the LED's blurred
+  // halo; the map's dot is the LED; over it the light on its glass. Paint is set as attributes
+  // (fx.css only restyles states). Returns the ring (which the pointer light turns), or null for
+  // a key it can't dress.
   function dress(g) {
     const ring = g.querySelector(".kmap-ring");
     const dot = g.querySelector(".kmap-dot");
@@ -182,16 +236,20 @@ function watchMap(svg, finePointer, motion) {
     if (!ring || !(r > 0)) return null;
     dressed.add(g);
     const key = r + KEY_PAD;
-    g.style.setProperty("--neu-kmap-led-k", ((LED * key) / r).toFixed(3));
-    g.style.setProperty("--neu-kmap-halo-w", `${(2 * r * (HALO / LED - 1)).toFixed(2)}px`);
+    const unit = (key / FACE.key).toFixed(4);
+    g.style.setProperty("--neu-kmap-led-k", ((FACE.led * key) / (FACE.key * r)).toFixed(4));
     const face = decor("g", "neumorph-kmap-face");
+    face.style.setProperty("--neu-kmap-u", unit);
     face.append(
-      disc("neumorph-kmap-dome", key, DOME.r, DOME.at),
-      disc("neumorph-kmap-lip", key, SOCKET.r + SOCKET.wall / 2, SOCKET.lip),
-      disc("neumorph-kmap-socket", key, SOCKET.r, 0, SOCKET.wall),
+      part("neumorph-kmap-key", FACE.key, { fill: "url(#neumorph-kmap-convex)" }),
+      part("neumorph-kmap-rim", FACE.rim, { fill: "none", stroke: "url(#neumorph-kmap-rim)", "stroke-width": FACE.rimW }),
+      part("neumorph-kmap-socket", FACE.socket, { fill: "url(#neumorph-kmap-concave)", filter: "url(#neumorph-kmap-inset)" }),
+      part("neumorph-kmap-halo", FACE.halo, { filter: "url(#neumorph-kmap-bloom)" }),
     );
+    const glass = part("neumorph-kmap-glass", FACE.led, { fill: "url(#neumorph-kmap-ledlight)" });
+    glass.style.setProperty("--neu-kmap-u", unit);
     g.insertBefore(face, dot);
-    g.insertBefore(disc("neumorph-kmap-glint", key, GLINT.r, GLINT.at), dot.nextSibling);
+    g.insertBefore(glass, dot.nextSibling);
     return ring;
   }
 
@@ -473,7 +531,7 @@ function watchMap(svg, finePointer, motion) {
 
   // Follows the pointer frame by frame without transitions (an eased key restyles every frame,
   // which on 150 notes costs more than the turn itself).
-  function paint() {
+  function paintPointer() {
     frame = 0;
     const m = pointer ? viewport.getScreenCTM() : null;
     for (const [g, n] of nodes) {
@@ -495,7 +553,7 @@ function watchMap(svg, finePointer, motion) {
   }
 
   function schedule() {
-    if (!frame && !document.hidden) frame = requestAnimationFrame(paint);
+    if (!frame && !document.hidden) frame = requestAnimationFrame(paintPointer);
   }
 
   function onMove(event) {
@@ -533,6 +591,7 @@ function watchMap(svg, finePointer, motion) {
     svg.removeEventListener("pointermove", onMove);
     svg.removeEventListener("pointerover", onOver);
     svg.removeEventListener("pointerleave", onLeave);
+    defs.remove(); // its ids leave the document with the map they belong to
   };
 }
 

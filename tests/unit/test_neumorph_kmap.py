@@ -1,4 +1,4 @@
-"""Neumorph knowledge map (N3 + N4 + N4b, docs/frontend-os.md#neumorph "Knowledge map").
+"""Neumorph knowledge map (N3 + N4 + N4b + N4c, docs/frontend-os.md#neumorph "Knowledge map").
 
 Checks: the eight category LEDs are >= 3:1 on the porcelain and distinct; every map hook and
 state (stage, keys, LEDs, grooves, labels, index, note slab, approvals incl. the F-CL6 code form)
@@ -7,10 +7,12 @@ away (C46 independent view); keys are moulded from the surface (no dot grid, no 
 shine) and read as keys + LEDs in a dish without fx/; each key has ONE shadow (the ring's soft
 pair; no shadow discs); selected is the press, latched; the map keyframes only move transform /
 opacity / stroke-dashoffset, and filter only in the eased height of a key in play; the groove
-carving lies inside the groove; every lit channel draws; fx/kmap.js is decoration only, in
-flat fills (no url(): no network, storage, HTML or text sinks, no prevented events, passive
-listeners, CSSOM writes, aria-hidden decor, pauses while hidden, skips selected keys in the
-pointer light) and moulds the map under reduced motion too, with its motion left out.
+carving lies inside the groove; every lit channel draws; fx/kmap.js is decoration only (no
+network, storage, HTML or text sinks, no prevented events, passive listeners, CSSOM writes,
+aria-hidden decor, pauses while hidden, skips selected keys in the pointer light); its keys are
+the approved mockup's, element for element, painted by one aria-hidden <defs> whose namespaced
+ids are its only url(#...) references (N4c); and it moulds the map under reduced motion too,
+with its motion left out.
 """
 
 from __future__ import annotations
@@ -237,8 +239,10 @@ def test_filters_are_static_one_pass_on_layers_never_per_line_or_animated() -> N
     assert "stroke-dasharray: 0.1 var(--neu-kmap-dimple)" in tag_carve
     assert "viewport.insertBefore(carves, flows)" in KMAP_JS and "(1 / k)" in KMAP_JS
     assert "filter" not in chrome[f"{SCOPE} .kmap-edge"]
-    # One key, one shadow: the ring keeps chrome's soft pair; no shadow discs anywhere.
-    assert f"{SCOPE} .kmap-svg.neumorph-kmap-moulded .kmap-ring" not in fx
+    # One key, one shadow: the ring keeps chrome's soft pair (fx/ only drops its border, which
+    # the face's rim replaces); no shadow discs anywhere.
+    moulded_ring = fx.get(f"{SCOPE} .kmap-svg.neumorph-kmap-moulded .kmap-ring", "")
+    assert "filter" not in moulded_ring and "drop-shadow" not in moulded_ring
     for name in ("neumorph-kmap-shade", "neumorph-kmap-glow", "--neu-kmap-disc"):
         assert name not in FX and name not in KMAP_JS and name not in CHROME, name
     for css in (CHROME, FX):
@@ -314,15 +318,84 @@ def test_kmap_fx_is_decoration_only() -> None:
     assert KMAP_JS.count('setAttribute("aria-hidden", "true")') == 2
     assert KMAP_JS.count('decor("g", FLOWS)') == 1
     assert KMAP_JS.count("document.createElement(") == 1
-    # Flat fills only: no paint servers, filters, masks or ids of its own (an OS may not url()).
-    assert "url(" not in KMAP_JS and '"id"' not in KMAP_JS
-    for tag in ("defs", "filter", "mask", "Gradient", "pattern"):
-        assert f'"{tag}' not in KMAP_JS, tag
     # Frames only on demand, none while the tab is hidden.
     assert "requestAnimationFrame" in KMAP_JS and "setInterval(" not in KMAP_JS
     assert "visibilitychange" in KMAP_JS and "document.hidden" in KMAP_JS
     # The pointer light leaves a latched (selected) key alone.
     assert 'classList.contains("is-selected")' in KMAP_JS
+
+
+PAINT_TAGS = {
+    "linearGradient", "radialGradient", "stop", "filter", "feComponentTransfer", "feFuncA",
+    "feOffset", "feGaussianBlur", "feFlood", "feComposite", "feMerge", "feMergeNode",
+}  # fmt: skip
+
+
+def test_kmap_fx_references_only_its_own_in_document_paint_servers() -> None:
+    # N4c (owner 2026-11-14): one aria-hidden <defs> of the mockup's gradients and filters,
+    # namespaced ids, referenced only as url(#neumorph-kmap-*) fragments; nothing else.
+    assert KMAP_JS.count('decor("defs", "neumorph-kmap-paint")') == 1
+    assert "svg.insertBefore(defs, svg.firstChild)" in KMAP_JS
+    ids = re.findall(r'\bid: "([^"]*)"', KMAP_JS)
+    assert ids and len(ids) == len(set(ids))
+    assert all(re.fullmatch(r"neumorph-kmap-[a-z]+", i) for i in ids), ids
+    # Ids come only from the paint-server table (the other `id:` is a note id read from the map,
+    # kept in a JS object): no other way to name an element.
+    named = set(re.findall(r"\bid:\s*([^,}\s]+)", KMAP_JS)) - {f'"{i}"' for i in ids}
+    assert named == {"g.dataset.id"}, named
+    assert '"id"' not in KMAP_JS and ".id =" not in KMAP_JS and "href" not in KMAP_JS
+    refs = re.findall(r"url\(([^)]*)\)", KMAP_JS)
+    assert len(refs) == KMAP_JS.count("url(")
+    for ref in refs:
+        assert ref.startswith("#") and ref[1:] in ids, ref
+    assert {ref[1:] for ref in refs} == set(ids)  # every server is used, none dangles
+    # Only gradients and filter primitives: no images, masks, patterns, <use> or scripts.
+    tags = set(re.findall(r'\["(\w+)", \{', KMAP_JS))
+    assert tags and tags <= PAINT_TAGS, tags - PAINT_TAGS
+    for tag in ("mask", "pattern", "image", "use", "feImage", "foreignObject", "script"):
+        assert f'"{tag}"' not in KMAP_JS, tag
+    # The CSS stays url()-free: paint is set as attributes, CSS only restyles states.
+    assert "url(" not in FX and "url(" not in CHROME
+    # The paint is unmounted with the map it belongs to.
+    assert "defs.remove()" in KMAP_JS
+
+
+def test_kmap_keys_are_the_mockup_key_element_for_element() -> None:
+    # Drawn at the mockup's own size (a 21-unit key) and scaled per key, so every gradient,
+    # blur and inset keeps the mockup's proportions.
+    face = "const FACE = { key: 21, rim: 20.4, rimW: 1.2, socket: 10.5, halo: 8.8, led: 6.3 };"
+    assert face in KMAP_JS
+    for name, paint in (
+        ("neumorph-kmap-key", 'fill: "url(#neumorph-kmap-convex)"'),
+        ("neumorph-kmap-rim", 'stroke: "url(#neumorph-kmap-rim)"'),
+        ("neumorph-kmap-socket", 'filter: "url(#neumorph-kmap-inset)"'),
+        ("neumorph-kmap-halo", 'filter: "url(#neumorph-kmap-bloom)"'),
+        ("neumorph-kmap-glass", 'fill: "url(#neumorph-kmap-ledlight)"'),
+    ):
+        assert re.search(rf'part\("{name}", FACE\.\w+, \{{[^}}]*{re.escape(paint)}', KMAP_JS), name
+    assert 'fill: "url(#neumorph-kmap-concave)"' in KMAP_JS
+    assert "stdDeviation: 2.2" in KMAP_JS  # the halo's blur
+    # The flat N4 dressing is gone (dome, lip, glint discs; the hard halo stroke).
+    for old in ("dome", "lip", "glint"):
+        assert f"neumorph-kmap-{old}" not in KMAP_JS and f"neumorph-kmap-{old}" not in FX, old
+    for old in ("--neu-kmap-halo-w", "--neu-kmap-glint", "--neu-kmap-socket-wall"):
+        assert old not in KMAP_JS and old not in FX, old
+    fx = dict(_rules(FX))
+    assert "stroke: none" in fx[f"{SCOPE} .kmap-svg.neumorph-kmap-moulded .kmap-dot"]
+    halo = fx[f"{SCOPE} .neumorph-kmap-halo"]
+    assert "var(--neu-kmap-cat" in halo and "var(--neu-kmap-halo-on)" in halo
+    assert re.search(r"--neu-kmap-halo-on:\s*0\.32;", FX)
+    # States as the mockup: selected rim hairline, match iris socket ring, dark LEDs lose glass
+    # and glow (hidden: a hidden halo isn't blurred), recent halos breathe.
+    rim = fx[f"{SCOPE} :where(.kmap-node.is-selected) .neumorph-kmap-rim"]
+    assert "var(--neu-kmap-hairline)" in rim and "stroke-width: 0.75px" in rim
+    matches = ":where(.kmap-svg:has(.kmap-node.is-filtered) .kmap-node:not(.is-filtered))"
+    assert "stroke: var(--neu-kmap-match)" in fx[f"{SCOPE} {matches} .neumorph-kmap-socket"]
+    dark_parts = ":is(.neumorph-kmap-halo, .neumorph-kmap-glass)"
+    dark = [body for sel, body in _rules(FX) if sel.endswith(dark_parts)]
+    assert dark and "visibility: hidden" in dark[0]
+    breathe = _rule(FX, f"{SCOPE} :where(.kmap-node.is-recent) .neumorph-kmap-halo")
+    assert "animation: neumorph-kmap-bloom" in breathe and "steps(24)" in breathe
 
 
 def test_kmap_fx_moulds_under_reduced_motion_with_its_motion_left_out() -> None:
