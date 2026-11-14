@@ -1,8 +1,9 @@
 /*
   Knowledge-map moulding and motion for Neumorph (docs/frontend-os.md#neumorph "Knowledge map"):
-  dresses every note as a porcelain key (shadow discs, a face with dome and socket, a glint on
-  the LED), draws iris light along the focused note's grooves out of it, ripples
-  the floor on select, plays the opening wave and makes the pointer a light source. Reads only
+  dresses every note as a porcelain key (a face with dome and socket, a glint on the LED; its one
+  soft shadow is chrome's), carves the grooves, draws iris light along the focused note's grooves
+  out of it, ripples the floor on select, plays the opening wave and makes the pointer a light
+  source that turns each nearby key's shadow. Reads only
   the map's neutral hooks and geometry; writes CSS custom properties (CSSOM), OS-prefixed classes
   and its own empty aria-hidden decor. No text, no item data, no prevented events; the approvals
   card is untouched.
@@ -14,6 +15,9 @@ const PAUSED = "neumorph-kmap-paused";
 const RIPPLE = "neumorph-kmap-ripple";
 const FLOWS = "neumorph-kmap-flows";
 const SETTLING = "neumorph-kmap-settling"; // just let go: it eases back to rest
+// The height a let-go key eases down (or up) from: a raised key or the latched (selected) one.
+const LEFT_UP = "var(--neu-kmap-lift-up)";
+const LEFT_FLUSH = "var(--neu-kmap-lift-flush)";
 
 const WAVE_MS = 520; // the outermost key starts this long after the centre one
 const OPEN_MS = 1500; // wave + rise + label fade, then the opening class goes
@@ -30,11 +34,10 @@ const SPARK_PX = 1.5; // radius of a lit dimple, on screen
 
 // A key's proportions over the layout radius r (knowledge-map.js draws the ring at r + 4), as
 // fractions of the key: the mockup's socket 1/2, halo .44, LED .3. Few elements per key on
-// purpose: a state change restyles every part of every key, so each part is one circle. A shadow
-// disc is a fill plus a wide translucent stroke: darker at the key's edge, lighter beyond (a
-// stepped soft edge, since an OS references no gradients). The socket's wall is its stroke.
+// purpose: a state change restyles every part of every key, so each part is one circle. The
+// socket's wall is its stroke. The key's shadow is no part of its own: it is the ring's soft
+// drop-shadow pair (chrome.css), so a key is one key with one shadow.
 const KEY_PAD = 4;
-const DISC = { r: 1.0, edge: 0.36 };
 const DOME = { r: 0.8, at: -0.1 };
 const SOCKET = { r: 0.465, wall: 0.07, lip: 0.04 };
 const HALO = 0.44;
@@ -82,8 +85,12 @@ function lineLength(line) {
   return Math.hypot(x2 - x1, y2 - y1);
 }
 
-/** Watch one knowledge-map window; returns its stop function. */
-function watchMap(svg, finePointer) {
+/**
+ * Watch one knowledge-map window; returns its stop function. With `motion` false (reduced
+ * motion) the keys are still dressed and the grooves carved (structure, not motion); the
+ * opening wave, the ripple and the pointer light stay off, and fx.css stills the rest.
+ */
+function watchMap(svg, finePointer, motion) {
   const map = svg.closest(".kmap-map");
   const stage = svg.closest(".kmap-stage");
   const viewport = svg.querySelector(".kmap-viewport");
@@ -92,7 +99,7 @@ function watchMap(svg, finePointer) {
   if (!map || !viewport || !nodeLayer || !edgeLayer) return () => {};
   svgNs = svg.namespaceURI;
 
-  const nodes = new Map(); // g -> { id, x, y, sx, sy, lit }
+  const nodes = new Map(); // g -> { id, x, y, sx, sy, ring }
   const byId = new Map(); // note id -> g
   const dressed = new WeakSet();
   const settling = new Map(); // g -> when it was let go
@@ -110,14 +117,15 @@ function watchMap(svg, finePointer) {
   const flows = decor("g", FLOWS);
   viewport.insertBefore(flows, nodeLayer);
 
-  // The grooves' carving: a copy of every groove in a shade layer nudged up-left and a light
-  // layer nudged down-right, under the edge layer, so only a 1px sliver of each shows. Plain
-  // strokes, no filter: a layer filter re-runs over the whole map on every repaint.
+  // The grooves' carving: a narrower copy of every groove in a faint shade layer nudged up-left
+  // and a faint light layer nudged down-right, over the edge layer (under the channel light), so
+  // both stay inside their groove: its upper wall in shade, its lower wall lit, one channel.
+  // Plain strokes, no filter: a layer filter re-runs over the whole map on every repaint.
   const carveShade = decor("g", "neumorph-kmap-carve-shade");
   const carveLight = decor("g", "neumorph-kmap-carve-light");
   const carves = decor("g", "neumorph-kmap-carves");
   carves.append(carveShade, carveLight);
-  edgeLayer.parentNode.insertBefore(carves, edgeLayer);
+  viewport.insertBefore(carves, flows);
   let carved = []; // [edge, shade copy, light copy]
 
   function carve() {
@@ -163,21 +171,19 @@ function watchMap(svg, finePointer) {
     return true;
   }
 
-  // A key: two shadow discs under the ring; on it a face (dome, lip, socket) under the LED and a
-  // glint on the LED. The LED's halo is its own stroke (fx.css), as wide as --neu-kmap-halo-w.
-  // Returns the discs (the pointer light turns only them).
+  // A key: on the ring a face (dome, lip, socket) under the LED and a glint on the LED. The LED's
+  // halo is its own stroke (fx.css), as wide as --neu-kmap-halo-w. Returns the ring (the key's
+  // shadow, which the pointer light turns), or null for a key it can't dress.
   function dress(g) {
     const ring = g.querySelector(".kmap-ring");
     const dot = g.querySelector(".kmap-dot");
-    if (dressed.has(g)) return [...g.querySelectorAll(".neumorph-kmap-shade, .neumorph-kmap-glow")];
+    if (dressed.has(g)) return ring;
     const r = dot ? Number(dot.getAttribute("r")) : 0;
-    if (!ring || !(r > 0)) return [];
+    if (!ring || !(r > 0)) return null;
     dressed.add(g);
     const key = r + KEY_PAD;
     g.style.setProperty("--neu-kmap-led-k", ((LED * key) / r).toFixed(3));
     g.style.setProperty("--neu-kmap-halo-w", `${(2 * r * (HALO / LED - 1)).toFixed(2)}px`);
-    const discs = [disc("neumorph-kmap-shade", key, DISC.r, 0, DISC.edge), disc("neumorph-kmap-glow", key, DISC.r, 0, DISC.edge)];
-    for (const d of discs) g.insertBefore(d, ring);
     const face = decor("g", "neumorph-kmap-face");
     face.append(
       disc("neumorph-kmap-dome", key, DOME.r, DOME.at),
@@ -186,7 +192,7 @@ function watchMap(svg, finePointer) {
     );
     g.insertBefore(face, dot);
     g.insertBefore(disc("neumorph-kmap-glint", key, GLINT.r, GLINT.at), dot.nextSibling);
-    return discs;
+    return ring;
   }
 
   function setLine(line, from, delay) {
@@ -205,6 +211,7 @@ function watchMap(svg, finePointer) {
   }
 
   function open() {
+    if (!motion) return; // reduced motion: the keys are simply there
     if (svg.classList.contains(OPENING)) {
       svg.classList.remove(OPENING);
       void svg.getBoundingClientRect(); // restart the wave from its first frame
@@ -229,9 +236,9 @@ function watchMap(svg, finePointer) {
     let cx = 0;
     let cy = 0;
     for (const g of groups) {
-      const discs = dress(g);
+      const ring = dress(g);
       const p = nodePoint(g);
-      nodes.set(g, { id: g.dataset.id, x: p.x, y: p.y, sx: 1, sy: 1, lit: false, discs });
+      nodes.set(g, { id: g.dataset.id, x: p.x, y: p.y, sx: 1, sy: 1, ring });
       byId.set(g.dataset.id, g);
       cx += p.x / groups.length;
       cy += p.y / groups.length;
@@ -335,10 +342,11 @@ function watchMap(svg, finePointer) {
     }
   }
 
-  // A key leaves a state that eased (hover, neighbour, selected): it eases back too, while the
-  // rest of the map changes in one step (fx.css lists who may ease).
-  function letGo(g) {
+  // A key leaves a state that eased (hover, neighbour, selected): it eases back too, from the
+  // height it left, while the rest of the map changes in one step (fx.css lists who may ease).
+  function letGo(g, left = LEFT_UP) {
     if (!g || !g.isConnected) return;
+    g.style.setProperty("--neu-kmap-left", left);
     g.classList.add(SETTLING);
     settling.set(g, performance.now());
     if (!settleTimer) settleTimer = setTimeout(sweepSettled, SETTLE_MS);
@@ -367,14 +375,15 @@ function watchMap(svg, finePointer) {
     const chosenId = chosen ? chosen.dataset.id : null;
     const next = chosenId || (svg.classList.contains("has-focus") ? hovered : null);
     if (chosen && chosenId !== selected) {
-      ripple(chosen);
-      settle(chosen, true); // a latched key ignores the pointer light
+      if (motion) ripple(chosen);
+      settle(chosen); // a latched key ignores the pointer light
     }
-    if (selected && selected !== chosenId) letGo(byId.get(selected));
+    const was = selected;
+    if (selected && selected !== chosenId) letGo(byId.get(selected), LEFT_FLUSH);
     selected = chosenId;
     if (next === focus) return;
     if (focus) {
-      letGo(byId.get(focus));
+      if (focus !== was) letGo(byId.get(focus));
       for (const id of neighboursOf(focus)) letGo(byId.get(id));
     }
     focus = next;
@@ -440,33 +449,26 @@ function watchMap(svg, finePointer) {
   // --- the pointer light (fine pointers only): within reach, a key casts its shadow away from
   // the pointer, blended into the room light (up-left) with distance so nothing snaps ---
 
-  // Written on the two discs, not the node: only they restyle (a node write restyles the whole
-  // key, ~15x the cost on a 150-note map).
-  function turn(g, n, sx, sy) {
-    if (Math.abs(sx - n.sx) < EPSILON && Math.abs(sy - n.sy) < EPSILON) return;
+  // Written on the ring (the only part that casts the shadow), not the node: only it restyles (a
+  // node write restyles the whole key, several times the cost on a 150-note map).
+  function turn(n, sx, sy) {
+    if (!n.ring || (Math.abs(sx - n.sx) < EPSILON && Math.abs(sy - n.sy) < EPSILON)) return;
     n.sx = sx;
     n.sy = sy;
-    for (const d of n.discs) {
-      if (sx === 1 && sy === 1) {
-        d.style.removeProperty("--neu-kmap-sx");
-        d.style.removeProperty("--neu-kmap-sy");
-      } else {
-        d.style.setProperty("--neu-kmap-sx", sx.toFixed(3));
-        d.style.setProperty("--neu-kmap-sy", sy.toFixed(3));
-      }
+    if (sx === 1 && sy === 1) {
+      n.ring.style.removeProperty("--neu-kmap-sx");
+      n.ring.style.removeProperty("--neu-kmap-sy");
+    } else {
+      n.ring.style.setProperty("--neu-kmap-sx", sx.toFixed(3));
+      n.ring.style.setProperty("--neu-kmap-sy", sy.toFixed(3));
     }
   }
 
-  // Back to the room light. Leaving reach needs no easing (the light already fades to nothing
-  // with distance); the pointer leaving the map or the key latching does: it eases back.
-  function settle(g, ease) {
+  // Back to the room light, in one step: the light already fades to nothing with distance, and
+  // a key that latches eases down anyway (its press).
+  function settle(g) {
     const n = nodes.get(g);
-    if (!n) return;
-    if (n.lit) {
-      n.lit = false;
-      if (ease) letGo(g);
-    }
-    turn(g, n, 1, 1);
+    if (n) turn(n, 1, 1);
   }
 
   // Follows the pointer frame by frame without transitions (an eased key restyles every frame,
@@ -476,7 +478,7 @@ function watchMap(svg, finePointer) {
     const m = pointer ? viewport.getScreenCTM() : null;
     for (const [g, n] of nodes) {
       if (!m || g.classList.contains("is-selected")) {
-        settle(g, true);
+        settle(g);
         continue;
       }
       const dx = m.a * n.x + m.c * n.y + m.e - pointer.x;
@@ -484,12 +486,11 @@ function watchMap(svg, finePointer) {
       const d = Math.hypot(dx, dy) || 1;
       const w = Math.max(0, 1 - d / REACH_PX);
       if (w === 0) {
-        settle(g, false);
+        settle(g);
         continue;
       }
-      n.lit = true;
       const lean = SWING * w * Math.min(1, d / OVERHEAD_PX);
-      turn(g, n, 1 - w + (dx / d) * lean, 1 - w + (dy / d) * lean);
+      turn(n, 1 - w + (dx / d) * lean, 1 - w + (dy / d) * lean);
     }
   }
 
@@ -517,7 +518,7 @@ function watchMap(svg, finePointer) {
     schedule();
   }
 
-  svg.addEventListener("pointermove", onMove, { passive: true });
+  if (motion) svg.addEventListener("pointermove", onMove, { passive: true });
   svg.addEventListener("pointerover", onOver, { passive: true });
   svg.addEventListener("pointerleave", onLeave, { passive: true });
 
@@ -535,7 +536,11 @@ function watchMap(svg, finePointer) {
   };
 }
 
-export function initKmap() {
+/**
+ * Mould every knowledge map shown. `motion` false (reduced motion): the same keys and grooves,
+ * nothing that moves on its own (fx.js starts this in both cases; a key is never a bare dot).
+ */
+export function initKmap(motion = true) {
   const main = document.getElementById("main");
   if (!main) return;
   const finePointer = matchMedia("(pointer: fine)");
@@ -548,7 +553,7 @@ export function initKmap() {
     if (svg === current) return;
     stop();
     current = svg;
-    stop = svg ? watchMap(svg, finePointer) : () => {};
+    stop = svg ? watchMap(svg, finePointer, motion) : () => {};
   }
 
   // Hidden tab: the recent LEDs stop breathing and the pointer light stops (no frames).

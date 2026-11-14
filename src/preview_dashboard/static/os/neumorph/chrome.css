@@ -167,6 +167,10 @@
   --neu-kmap-key: #e9edf3;
   --neu-kmap-rim: rgb(255 255 255 / 0.75);
   --neu-kmap-led-off: #d3d9e3;
+  /* Without fx/: the LED sits in a plain dish (a ring a shade darker than the key, about the
+     socket's width, in the LED's own units). */
+  --neu-kmap-dish: #d6dde8;
+  --neu-kmap-dish-w: 9px;
   /* Height of a key: its shadow pair is --neu-kmap-throw x lift away, --neu-kmap-soft x lift
      soft. The shade falls along (--neu-kmap-sx, --neu-kmap-sy), the light opposite; the room light
      is up-left (1, 1); fx/kmap.js swings it away from the pointer. */
@@ -1410,9 +1414,9 @@
    smooth well; notes are porcelain keys pressed out of it with a category LED at the centre;
    links are grooves cut into it; index, note and approvals are slabs, wells and keys. Hover
    lifts a key, press drops it flush, select latches the press; every state reads without
-   motion. fx/kmap.js + fx/fx.css add the moulding (shadow discs, sockets, LED glass, the groove
-   filter), the opening wave, the channel light, the ripple and the pointer light; nothing here
-   needs them. --- */
+   motion. fx/kmap.js + fx/fx.css add the moulding (sockets, LED glass, the groove carving,
+   eased heights), the opening wave, the channel light, the ripple and the pointer light;
+   nothing here needs them. --- */
 
 :root[data-os="neumorph"] .kmap-controls {
   gap: var(--space-3);
@@ -1518,7 +1522,7 @@
 /* Keys. Each part is drawn round its node's origin (the g carries the position, so the g itself
    never gets a CSS transform) and scales by --neu-kmap-k. The key's height is one number,
    --neu-kmap-lift, which the states below set on the node; here it drives a CSS drop-shadow
-   pair (static, never transitioned). fx/ replaces that pair with moulded shadow discs.
+   pair (never transitioned; fx/ eases it for keys in play and turns it to the pointer).
    Focus and filter changes restyle the whole map at once, so nothing map-wide fades: the
    grooves, keys and labels change in one step (one repaint, not 300ms of them on 150 notes). */
 
@@ -1540,14 +1544,17 @@
   stroke-width: 1px;
   stroke-dasharray: none;
   vector-effect: non-scaling-stroke;
-  filter: drop-shadow(calc(var(--neu-kmap-throw) * var(--neu-kmap-sx) * var(--neu-kmap-lift)) calc(var(--neu-kmap-throw) * var(--neu-kmap-sy) * var(--neu-kmap-lift)) calc(var(--neu-kmap-soft) * var(--neu-kmap-lift)) var(--neu-kmap-shade)) drop-shadow(calc(var(--neu-kmap-throw) * var(--neu-kmap-sx) * var(--neu-kmap-lift) * -1) calc(var(--neu-kmap-throw) * var(--neu-kmap-sy) * var(--neu-kmap-lift) * -1) calc(var(--neu-kmap-soft) * var(--neu-kmap-lift)) var(--neu-kmap-light));
+  filter: drop-shadow(calc(var(--neu-kmap-throw) * var(--neu-kmap-sx) * var(--neu-kmap-lift) * -1) calc(var(--neu-kmap-throw) * var(--neu-kmap-sy) * var(--neu-kmap-lift) * -1) calc(var(--neu-kmap-soft) * var(--neu-kmap-lift)) var(--neu-kmap-light)) drop-shadow(calc(var(--neu-kmap-throw) * var(--neu-kmap-sx) * var(--neu-kmap-lift)) calc(var(--neu-kmap-throw) * var(--neu-kmap-sy) * var(--neu-kmap-lift)) calc(var(--neu-kmap-soft) * var(--neu-kmap-lift)) var(--neu-kmap-shade));
   transform: scale(var(--neu-kmap-k));
 }
 
-/* The LED: the category colour, small, at the key's centre (fx/ gives it glass and a socket). */
+/* The LED: the category colour, small, at the key's centre, set in a plain dish (its own wide
+   stroke under it), so a key never shows a bare dot; fx/ gives it glass and a moulded socket. */
 :root[data-os="neumorph"] .kmap-dot {
   fill: var(--neu-kmap-cat, var(--kmap-c7));
-  stroke: none;
+  stroke: var(--neu-kmap-dish);
+  stroke-width: var(--neu-kmap-dish-w);
+  paint-order: stroke;
   transform: scale(calc(var(--neu-kmap-k) * var(--neu-kmap-led-k)));
 }
 

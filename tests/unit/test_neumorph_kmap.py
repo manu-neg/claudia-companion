@@ -1,14 +1,16 @@
-"""Neumorph knowledge map (N3 + N4, docs/frontend-os.md#neumorph "Knowledge map").
+"""Neumorph knowledge map (N3 + N4 + N4b, docs/frontend-os.md#neumorph "Knowledge map").
 
 Checks: the eight category LEDs are >= 3:1 on the porcelain and distinct; every map hook and
 state (stage, keys, LEDs, grooves, labels, index, note slab, approvals incl. the F-CL6 code form)
 has a rule; the stage never shows a box outline; the approvals card is never hidden or animated
 away (C46 independent view); keys are moulded from the surface (no dot grid, no plates, no
-shine) and read as keys + LEDs without fx/; selected is the press, latched; the map keyframes
-only move transform / opacity / stroke-dashoffset and no filter is animated; every lit channel
-draws; fx/kmap.js is decoration only, in flat fills (no url(): no network, storage, HTML or
-text sinks, no prevented events, passive listeners, CSSOM writes, aria-hidden decor, pauses
-while hidden, skips selected keys in the pointer light) and runs only with motion allowed.
+shine) and read as keys + LEDs in a dish without fx/; each key has ONE shadow (the ring's soft
+pair; no shadow discs); selected is the press, latched; the map keyframes only move transform /
+opacity / stroke-dashoffset, and filter only in the eased height of a key in play; the groove
+carving lies inside the groove; every lit channel draws; fx/kmap.js is decoration only, in
+flat fills (no url(): no network, storage, HTML or text sinks, no prevented events, passive
+listeners, CSSOM writes, aria-hidden decor, pauses while hidden, skips selected keys in the
+pointer light) and moulds the map under reduced motion too, with its motion left out.
 """
 
 from __future__ import annotations
@@ -164,6 +166,8 @@ def test_the_map_is_moulded_from_the_surface_and_reads_as_keys_without_fx() -> N
     assert "var(--neu-kmap-shade)" in ring and "var(--neu-kmap-light)" in ring
     dot = _rule(CHROME, f"{SCOPE} .kmap-dot")
     assert "var(--neu-kmap-cat" in dot and "var(--neu-kmap-led-k)" in dot
+    # Never a bare dot: the LED sits in a dish (its own wide stroke, painted under it).
+    assert "stroke: var(--neu-kmap-dish)" in dot and "paint-order: stroke" in dot
     assert "display: none" in _rule(CHROME, f"{SCOPE} .kmap-shine")
     label = _rule(CHROME, f"{SCOPE} .kmap-label")
     assert "stroke: none" in label and "filter: var(--neu-kmap-engrave)" in label
@@ -192,10 +196,11 @@ def test_selected_is_the_press_latched_and_states_rank_in_source_order() -> None
 
 def test_map_keyframes_only_move_transform_opacity_dashoffset_and_custom_properties() -> None:
     blocks = re.findall(r"@keyframes (neumorph-kmap-[\w-]+) \{((?:[^{}]*\{[^{}]*\})*)\s*\}", FX)
+    heights = {"neumorph-kmap-raise", "neumorph-kmap-press", "neumorph-kmap-settle"}
     assert {name for name, _ in blocks} >= {
         "neumorph-kmap-rise", "neumorph-kmap-swell", "neumorph-kmap-draw", "neumorph-kmap-ripple",
         "neumorph-kmap-breathe", "neumorph-kmap-spark", "neumorph-kmap-page",
-        "neumorph-kmap-lift",
+        "neumorph-kmap-lift", *heights,
     }  # fmt: skip
     for name, body in blocks:
         props = set(re.findall(r"([a-z-]+)\s*:", body))
@@ -203,6 +208,11 @@ def test_map_keyframes_only_move_transform_opacity_dashoffset_and_custom_propert
             "transform", "opacity", "stroke-dashoffset", "stroke-dasharray",
             "animation-timing-function",
         }  # fmt: skip
+        if name in heights:
+            # A key in play eases its one shadow from the height it had: the ring's pair only.
+            assert props == {"filter"} and body.count("drop-shadow(") == 2, name
+            assert "var(--neu-kmap-was)" in body and "to {" not in body, name
+            continue
         assert props <= allowed, name
         # dasharray is held (the same in every frame), never interpolated.
         held = set(re.findall(r"stroke-dasharray:\s*([^;]+);", body))
@@ -213,18 +223,24 @@ def test_filters_are_static_one_pass_on_layers_never_per_line_or_animated() -> N
     chrome, fx = dict(_rules(CHROME)), dict(_rules(FX))
     layer = f"{SCOPE} .kmap-svg g:has(> .kmap-edge)"
     assert "filter: var(--neu-kmap-lip)" in chrome[layer]
-    # fx/ drops the layer filter: the carving is plain stroke copies under the edge layer, a shade
-    # layer and a light layer nudged one screen pixel (1/zoom) apart.
+    # fx/ drops the layer filter: the carving is plain stroke copies over the edge layer, a shade
+    # layer and a light layer nudged one screen pixel (1/zoom) apart, narrower than the groove
+    # so both stay inside it (one channel, never parallel lines).
     moulded = fx[f"{SCOPE} .kmap-svg.neumorph-kmap-moulded g:has(> .kmap-edge)"]
     assert "filter: none" in moulded
     carve = fx[f"{SCOPE} .neumorph-kmap-carve"]
-    assert "vector-effect: non-scaling-stroke" in carve and "var(--neu-kmap-groove-w)" in carve
+    assert "vector-effect: non-scaling-stroke" in carve and "var(--neu-kmap-carve-w)" in carve
+    carve_w = re.search(r"--neu-kmap-carve-w:\s*(\d+)px;", FX)
+    groove_w = re.search(r"--neu-kmap-groove-w:\s*(\d+)px;", CHROME)
+    assert carve_w and groove_w and int(groove_w.group(1)) - int(carve_w.group(1)) >= 2
     tag_carve = fx[f'{SCOPE} .neumorph-kmap-carve[data-kind="tag"]']
     assert "stroke-dasharray: 0.1 var(--neu-kmap-dimple)" in tag_carve
-    assert "insertBefore(carves, edgeLayer)" in KMAP_JS and "(1 / k)" in KMAP_JS
+    assert "viewport.insertBefore(carves, flows)" in KMAP_JS and "(1 / k)" in KMAP_JS
     assert "filter" not in chrome[f"{SCOPE} .kmap-edge"]
-    # Moulded keys cast their shadow with discs moved by transform, not a filter.
-    assert "filter: none" in fx[f"{SCOPE} .kmap-svg.neumorph-kmap-moulded .kmap-ring"]
+    # One key, one shadow: the ring keeps chrome's soft pair; no shadow discs anywhere.
+    assert f"{SCOPE} .kmap-svg.neumorph-kmap-moulded .kmap-ring" not in fx
+    for name in ("neumorph-kmap-shade", "neumorph-kmap-glow", "--neu-kmap-disc"):
+        assert name not in FX and name not in KMAP_JS and name not in CHROME, name
     for css in (CHROME, FX):
         for selector, body in _rules(css):
             if ".kmap" in selector or "neumorph-kmap" in selector:
@@ -232,16 +248,30 @@ def test_filters_are_static_one_pass_on_layers_never_per_line_or_animated() -> N
 
 
 def test_only_keys_in_play_ease_so_a_focus_change_repaints_the_map_once() -> None:
-    eased = [
-        sel
+    eased = {
+        m.group(1): sel
         for sel, body in _rules(FX)
-        if "neumorph-kmap-shade" in sel and re.search(r"transition:\s*transform", body)
-    ]
-    assert len(eased) == 1
-    for state in (":hover", ".is-near", ".is-selected", ":active", "neumorph-kmap-settling"):
-        assert state in eased[0], state
-    # The pointer light turns only the two discs (not the whole key), frame by frame, uneased.
-    assert "neumorph-kmap-lit" not in FX and "for (const d of n.discs)" in KMAP_JS
+        if (m := re.search(r"animation:\s*(neumorph-kmap-(?:raise|press|settle)) ", body))
+    }
+    assert set(eased) == {"neumorph-kmap-raise", "neumorph-kmap-press", "neumorph-kmap-settle"}
+    states = {
+        "neumorph-kmap-settle": ("neumorph-kmap-settling",),
+        "neumorph-kmap-raise": (":hover", ".is-near"),
+        "neumorph-kmap-press": (":active", ".is-selected"),
+    }
+    for name, wanted in states.items():
+        sel = eased[name]
+        assert sel.startswith(f"{SCOPE} :where(") and sel.endswith(") .kmap-ring"), sel
+        for state in wanted:
+            assert state in sel, (name, state)
+    # Same weight, so source order is the priority: settle < raise < press.
+    order = [sel for sel, _ in _rules(FX)]
+    assert order.index(eased["neumorph-kmap-settle"]) < order.index(eased["neumorph-kmap-raise"])
+    assert order.index(eased["neumorph-kmap-raise"]) < order.index(eased["neumorph-kmap-press"])
+    # A let-go key eases from the height it left (kmap.js writes it).
+    assert '"--neu-kmap-left"' in KMAP_JS and "LEFT_FLUSH" in KMAP_JS
+    # The pointer light turns only the ring (not the whole key), frame by frame, uneased.
+    assert "neumorph-kmap-lit" not in FX and 'n.ring.style.setProperty("--neu-kmap-sx"' in KMAP_JS
     # Map-wide changes (edges, nodes, labels) don't fade.
     for selector, body in _rules(CHROME):
         if re.search(r"\.kmap-(edge|node|label)\s*$", selector):
@@ -295,12 +325,18 @@ def test_kmap_fx_is_decoration_only() -> None:
     assert 'classList.contains("is-selected")' in KMAP_JS
 
 
-def test_kmap_fx_runs_only_with_motion_allowed() -> None:
+def test_kmap_fx_moulds_under_reduced_motion_with_its_motion_left_out() -> None:
     body = (NEU / "fx" / "fx.js").read_text("utf-8")
     head, tail = body.split("if (REDUCE_MOTION) return;", 1)
-    # The effect is only started after the reduced-motion early return.
-    assert 'safe("kmap", initKmap)' in tail
-    assert 'safe("kmap"' not in head
+    # The moulding is structure, not motion: started before the reduced-motion return, told
+    # whether motion is allowed, so a key is never a bare dot.
+    assert 'safe("kmap", () => initKmap(!REDUCE_MOTION))' in head
+    assert 'safe("kmap"' not in tail
+    assert "export function initKmap(motion = true)" in KMAP_JS
+    # Without motion: no opening wave, no ripple, no pointer light.
+    assert "if (!motion) return;" in KMAP_JS
+    assert "if (motion) ripple(chosen);" in KMAP_JS
+    assert 'if (motion) svg.addEventListener("pointermove"' in KMAP_JS
     reduced = FX.split("@media (prefers-reduced-motion: reduce)", 1)[1]
     for token in re.findall(r"(--neu-dur-kmap-[a-z]+):", CHROME):
         assert f"{token}: 0ms;" in reduced, token
