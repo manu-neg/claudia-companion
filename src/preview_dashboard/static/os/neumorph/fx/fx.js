@@ -5,7 +5,7 @@
   safe() so one throwing can't stop the others (or the app). Entrances, hover/press and the
   picker/balloon/toast exits are pure CSS (chrome.css, fx.css); these scripts add the clock,
   the exits of surfaces the app removes at once (ghost.js), the badge pop, splash, saver and
-  the knowledge map's wave, channel flow, ripple and pointer light (kmap.js).
+  the knowledge map's moulding, wave, channel flow, ripple and pointer light (kmap.js).
 */
 import { initBadges } from "./badge.js";
 import { initClock } from "./clock.js";
@@ -16,7 +16,8 @@ import { initSplash } from "./splash.js";
 
 const OS = "neumorph";
 
-// Reduced motion turns off animation, not the layer: only the clock runs.
+// Reduced motion turns off animation, not the layer: only the clock and the knowledge map's
+// (still) moulding run.
 const REDUCE_MOTION = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /** Run `fn`; a thrown error is logged and swallowed so other effects still run. */
@@ -30,14 +31,15 @@ function safe(name, fn) {
 
 function start() {
   if (document.documentElement.dataset.os !== OS) return;
-  // The clock is not motion: it runs under reduced motion too.
+  // The clock is not motion: it runs under reduced motion too. Nor is the knowledge map's
+  // moulding (keys, LED sockets, carved grooves): it runs too, with its motion left out.
   safe("clock", initClock);
+  safe("kmap", () => initKmap(!REDUCE_MOTION));
   if (REDUCE_MOTION) return;
   safe("ghosts", initGhosts);
   safe("badges", initBadges);
   safe("splash", initSplash);
   safe("screensaver", initScreensaver);
-  safe("kmap", initKmap);
 }
 
 if (document.readyState === "loading") {

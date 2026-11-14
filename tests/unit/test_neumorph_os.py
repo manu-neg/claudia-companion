@@ -201,12 +201,14 @@ def test_motion_is_quiet_physical_and_token_timed() -> None:
     assert "@keyframes" not in chrome
 
 
-def test_fx_runs_the_clock_always_and_everything_else_only_without_reduced_motion() -> None:
+def test_fx_runs_the_clock_and_kmap_moulding_always_and_the_rest_only_with_motion() -> None:
     body = _text(FX_JS)
     effects = re.findall(r"safe\(\"(\w+)\"", body)
-    assert effects == ["clock", "ghosts", "badges", "splash", "screensaver", "kmap"]
+    assert effects == ["clock", "kmap", "ghosts", "badges", "splash", "screensaver"]
     head, tail = body.split("if (REDUCE_MOTION) return;", 1)
     assert 'safe("clock"' in head and 'safe("clock"' not in tail
+    # The knowledge map's moulding is structure: it runs too, told to leave its motion out.
+    assert 'safe("kmap", () => initKmap(!REDUCE_MOTION))' in head
     clock = _text(NEU / "fx" / "clock.js")
     assert "visibilitychange" in clock and "document.hidden ? stop() : start()" in clock
 

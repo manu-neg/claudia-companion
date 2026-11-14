@@ -473,14 +473,16 @@
   animation: neumorph-fade-out calc(var(--neu-dur-window-out) * 2) var(--neu-ease-in) forwards;
 }
 
-/* --- knowledge map (fx/kmap.js): the map moulded from the surface. kmap.js dresses every key
-   with its own aria-hidden decor: two shadow discs under it, and on it a face (a soft dome
-   highlight, the LED's socket and halo) plus a glint on the LED's glass. Everything is flat
-   fills in translucent steps: an OS references nothing, so no gradients or SVG filters. Keys rise
-   out of the floor in a wave from the centre while the grooves draw themselves; a focused note's
-   grooves fill with iris light drawn out of it; a selection ripples through the floor; recent
-   LEDs breathe; the pointer is a light source the nearby keys cast their shadow away from. Only
-   transform, opacity and stroke-dashoffset change; dasharray is held; no filter is animated. --- */
+/* --- knowledge map (fx/kmap.js): the map moulded from the surface. A key's shadow is chrome's
+   soft drop-shadow pair on the ring (one key, one shadow); kmap.js adds its own aria-hidden decor
+   on the key: a face (a soft dome highlight, the LED's socket and halo) and a glint on the LED's
+   glass. Everything is flat fills in translucent steps: an OS references nothing, so no gradients
+   or SVG filters. Keys rise out of the floor in a wave from the centre while the grooves draw
+   themselves; a focused note's grooves fill with iris light drawn out of it; a selection ripples
+   through the floor; recent LEDs breathe; the pointer is a light source the nearby keys cast
+   their shadow away from. Only transform, opacity and stroke-dashoffset change map-wide; the one
+   filter that moves is the shadow of a key in play (hover, neighbour, press, let go), for the
+   length of its ease. --- */
 
 :root[data-os="neumorph"] {
   --neu-kmap-rx: 0px;
@@ -490,14 +492,17 @@
   --neu-kmap-flow-w: 2px;
   --neu-kmap-flow-glow-w: 7px;
   --neu-kmap-flow-halo: rgb(81 70 216 / 0.3);
-  /* How far the shadow discs grow with height (a higher key casts a softer, wider shadow). */
-  --neu-kmap-spread: 0.07;
-  /* Moulding tones. A shadow disc is a fill and a lighter edge (a stepped soft edge); the face
-     is a dome highlight, a socket wall with a lit lower lip, and its floor. */
-  --neu-kmap-disc-shade: rgb(150 164 188 / 0.34);
-  --neu-kmap-disc-shade-edge: rgb(150 164 188 / 0.1);
-  --neu-kmap-disc-light: rgb(255 255 255 / 0.7);
-  --neu-kmap-disc-light-edge: rgb(255 255 255 / 0.22);
+  /* The key's one shadow, at the approved mockup's proportions (a 4px throw and 5px blur on a
+     21px key): longer and softer than chrome's static pair, which stays the no-fx fallback. */
+  --neu-kmap-throw: 3.4px;
+  --neu-kmap-soft: 4.2px;
+  --neu-kmap-shade: rgb(150 164 188 / 0.78);
+  /* The height a key in play eases from (the rules below set it per state; kmap.js sets
+     --neu-kmap-left on a key it lets go: the height it left). */
+  --neu-kmap-was: 1;
+  --neu-kmap-left: var(--neu-kmap-lift-up);
+  /* Moulding tones: the face is a dome highlight, a socket wall with a lit lower lip, and its
+     floor. */
   --neu-kmap-dome: rgb(255 255 255 / 0.32);
   --neu-kmap-socket-wall: #cfd6e1;
   --neu-kmap-socket-floor: #e6eaf1;
@@ -507,11 +512,16 @@
   --neu-kmap-t: 0;
   /* The LED's halo width, in its own units (kmap.js, per key; none until it is dressed). */
   --neu-kmap-halo-w: 0px;
-  /* Grooves: carved by a shade copy up-left and a light copy down-right under the edge layer;
-     kmap.js keeps the nudge one screen pixel whatever the zoom. */
-  --neu-kmap-carve-shade: rgb(138 153 178 / 0.55);
+  /* Grooves: carved by two narrower copies drawn inside each groove, a faint shade nudged
+     up-left and a faint light nudged down-right (kmap.js keeps the nudge one screen pixel at any
+     zoom): the groove's upper wall darkens and its lower wall catches the light, all within its
+     own width, so it reads as one channel. */
+  --neu-kmap-carve-w: 4px;
+  --neu-kmap-carve-shade: rgb(138 153 178 / 0.3);
   --neu-kmap-groove-faded: #dde3ec;
-  --neu-kmap-carve-light: rgb(255 255 255 / 1);
+  --neu-kmap-carve-light: rgb(255 255 255 / 0.55);
+  --neu-kmap-dimple-floor: #dce2eb;
+  --neu-kmap-dimple-light: rgb(255 255 255 / 0.3);
 }
 
 /* Opacity only: the keys' parts grow with neumorph-kmap-swell. */
@@ -525,11 +535,33 @@
   }
 }
 
-/* A key part grows out of the floor to its own size (no "to": it ends at its current transform,
-   so a shadow disc also slides out to where the key's height puts it). */
+/* A key part grows out of the floor to its own size (no "to": it ends at its current
+   transform). */
 @keyframes neumorph-kmap-swell {
   from {
     transform: scale(calc(var(--neu-kmap-k) * 0.8));
+  }
+}
+
+/* A key in play changes height: its shadow pair eases from the height it had (--neu-kmap-was)
+   to the one its state sets (no "to": it ends at chrome's pair, wherever the pointer turned it).
+   Three names for one motion, so a key going from one to the next restarts it: raise (hover,
+   neighbour), press (press, selected) and settle (let go). */
+@keyframes neumorph-kmap-raise {
+  from {
+    filter: drop-shadow(calc(var(--neu-kmap-throw) * var(--neu-kmap-sx) * var(--neu-kmap-was) * -1) calc(var(--neu-kmap-throw) * var(--neu-kmap-sy) * var(--neu-kmap-was) * -1) calc(var(--neu-kmap-soft) * var(--neu-kmap-was)) var(--neu-kmap-light)) drop-shadow(calc(var(--neu-kmap-throw) * var(--neu-kmap-sx) * var(--neu-kmap-was)) calc(var(--neu-kmap-throw) * var(--neu-kmap-sy) * var(--neu-kmap-was)) calc(var(--neu-kmap-soft) * var(--neu-kmap-was)) var(--neu-kmap-shade));
+  }
+}
+
+@keyframes neumorph-kmap-press {
+  from {
+    filter: drop-shadow(calc(var(--neu-kmap-throw) * var(--neu-kmap-sx) * var(--neu-kmap-was) * -1) calc(var(--neu-kmap-throw) * var(--neu-kmap-sy) * var(--neu-kmap-was) * -1) calc(var(--neu-kmap-soft) * var(--neu-kmap-was)) var(--neu-kmap-light)) drop-shadow(calc(var(--neu-kmap-throw) * var(--neu-kmap-sx) * var(--neu-kmap-was)) calc(var(--neu-kmap-throw) * var(--neu-kmap-sy) * var(--neu-kmap-was)) calc(var(--neu-kmap-soft) * var(--neu-kmap-was)) var(--neu-kmap-shade));
+  }
+}
+
+@keyframes neumorph-kmap-settle {
+  from {
+    filter: drop-shadow(calc(var(--neu-kmap-throw) * var(--neu-kmap-sx) * var(--neu-kmap-was) * -1) calc(var(--neu-kmap-throw) * var(--neu-kmap-sy) * var(--neu-kmap-was) * -1) calc(var(--neu-kmap-soft) * var(--neu-kmap-was)) var(--neu-kmap-light)) drop-shadow(calc(var(--neu-kmap-throw) * var(--neu-kmap-sx) * var(--neu-kmap-was)) calc(var(--neu-kmap-throw) * var(--neu-kmap-sy) * var(--neu-kmap-was)) calc(var(--neu-kmap-soft) * var(--neu-kmap-was)) var(--neu-kmap-shade));
   }
 }
 
@@ -607,9 +639,9 @@
 
 /* --- the moulding (kmap.js marks the svg .neumorph-kmap-moulded once its decor is in) --- */
 
-/* Grooves: kmap.js's carving copies replace chrome's lip filter (a filter on the layer re-runs
-   over the whole map on every repaint). The focused note's grooves stay floor-dark: the light is
-   drawn inside them (below). */
+/* Grooves: kmap.js's carving copies inside each groove replace chrome's lip filter (a filter on
+   the layer re-runs over the whole map on every repaint). The focused note's grooves stay
+   floor-dark: the light is drawn inside them (below). */
 :root[data-os="neumorph"] .kmap-svg.neumorph-kmap-moulded g:has(> .kmap-edge) {
   filter: none;
 }
@@ -618,8 +650,8 @@
   pointer-events: none;
 }
 
-/* A groove fading back under focus or a filter stays opaque (the carving under it must not show
-   through) and fades by colour toward the floor instead. */
+/* A groove fading back under focus or a filter stays opaque (its carving must stay inside it)
+   and fades by colour toward the floor instead. */
 :root[data-os="neumorph"] .kmap-svg.neumorph-kmap-moulded.has-focus .kmap-edge:not(.is-near),
 :root[data-os="neumorph"] .kmap-svg.neumorph-kmap-moulded .kmap-edge.is-filtered {
   opacity: 1;
@@ -634,10 +666,11 @@
   stroke: var(--neu-kmap-carve-light);
 }
 
-/* Each copy is its groove's shape: same width, caps and dimple pitch, in screen pixels. */
+/* Each copy is its groove's shape, narrower (same caps and dimple pitch, in screen pixels), so
+   nudged one pixel it still lies inside the groove: a soft wall, never a line of its own. */
 :root[data-os="neumorph"] .neumorph-kmap-carve {
   fill: none;
-  stroke-width: var(--neu-kmap-groove-w);
+  stroke-width: var(--neu-kmap-carve-w);
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
 }
@@ -646,18 +679,25 @@
   stroke-dasharray: 0.1 var(--neu-kmap-dimple);
 }
 
+/* Tag links: debossed dimples, not dots. Each dimple's floor is barely darker than the floor;
+   its carving (a faint shade up-left, a fainter light down-right) is what shows. */
+:root[data-os="neumorph"] .kmap-svg.neumorph-kmap-moulded .kmap-edge[data-kind="tag"] {
+  stroke: var(--neu-kmap-dimple-floor);
+}
+
+:root[data-os="neumorph"] .neumorph-kmap-carve-light .neumorph-kmap-carve[data-kind="tag"] {
+  stroke: var(--neu-kmap-dimple-light);
+}
+
 :root[data-os="neumorph"] .kmap-svg.neumorph-kmap-moulded .kmap-edge.is-near {
   stroke: var(--neu-kmap-groove);
 }
 
-/* The key: its shadow is the discs, not a filter. */
-:root[data-os="neumorph"] .kmap-svg.neumorph-kmap-moulded .kmap-ring {
-  filter: none;
-}
+/* The key's shadow is chrome's soft drop-shadow pair on the ring: one key, one shadow, its
+   offset and blur from the key's height (--neu-kmap-lift) and the light's direction
+   (--neu-kmap-sx/-sy, which the pointer light writes on the ring). */
 
 /* Every part of the dressing is drawn round the node's origin, like the ring. */
-:root[data-os="neumorph"] .neumorph-kmap-shade,
-:root[data-os="neumorph"] .neumorph-kmap-glow,
 :root[data-os="neumorph"] .neumorph-kmap-face,
 :root[data-os="neumorph"] .neumorph-kmap-glint {
   pointer-events: none;
@@ -665,40 +705,35 @@
   transform-origin: 0 0;
 }
 
-/* Shadow discs: a shade disc down-right of the key and a light disc up-left, offset by height x
-   direction. Each is one circle: its fill plus a wide translucent stroke make the edge darker
-   where it meets the key and lighter beyond it. Moving them is a transform, so a key lifting,
-   sinking or turning to the pointer is a transition, never a filter change. */
-:root[data-os="neumorph"] .neumorph-kmap-shade {
-  fill: var(--neu-kmap-disc-shade);
-  stroke: var(--neu-kmap-disc-shade-edge);
-  transform: translate(calc(var(--neu-kmap-throw) * var(--neu-kmap-sx) * var(--neu-kmap-lift)), calc(var(--neu-kmap-throw) * var(--neu-kmap-sy) * var(--neu-kmap-lift))) scale(calc(var(--neu-kmap-k) * (1 + var(--neu-kmap-spread) * var(--neu-kmap-lift))));
+/* Only keys in play ease their height: the hovered one, the focused note's neighbours, the
+   pressed and selected ones and those just let go (kmap.js: .neumorph-kmap-settling, with the
+   height it left in --neu-kmap-left). The rest of the map sinks and rises in one step, so a focus
+   change on 150 notes repaints the map once instead of for 300ms. The pointer light needs no
+   easing: kmap.js turns the keys every frame, fading with distance. Same weight (:where), so
+   source order decides: settle < raise < press. */
+:root[data-os="neumorph"] :where(.kmap-node.neumorph-kmap-settling) .kmap-ring {
+  --neu-kmap-was: var(--neu-kmap-left);
+  animation: neumorph-kmap-settle var(--neu-dur-release) var(--neu-ease-settle);
 }
 
-:root[data-os="neumorph"] .neumorph-kmap-glow {
-  fill: var(--neu-kmap-disc-light);
-  stroke: var(--neu-kmap-disc-light-edge);
-  transform: translate(calc(var(--neu-kmap-throw) * var(--neu-kmap-sx) * var(--neu-kmap-lift) * -1), calc(var(--neu-kmap-throw) * var(--neu-kmap-sy) * var(--neu-kmap-lift) * -1)) scale(calc(var(--neu-kmap-k) * (1 + var(--neu-kmap-spread) * var(--neu-kmap-lift))));
-}
-
-/* Only keys that are part of what the pointer does ease: the hovered one, the focused note's
-   neighbours, the pressed and selected ones and those just let go (kmap.js:
-   .neumorph-kmap-settling). The rest of the map sinks and rises in one step, so a focus change on
-   150 notes repaints the map once instead of for 300ms. The pointer light needs no easing: kmap.js
-   turns the keys every frame, fading with distance. */
-:root[data-os="neumorph"] :where(.kmap-node:hover, .kmap-node.is-near, .kmap-node.is-selected, .kmap-node:active, .kmap-node.neumorph-kmap-settling) :is(.neumorph-kmap-shade, .neumorph-kmap-glow) {
-  transition: transform var(--neu-dur-release) var(--neu-ease-settle);
+:root[data-os="neumorph"] :where(.kmap-node:hover, .kmap-node.is-near) .kmap-ring {
+  animation: neumorph-kmap-raise var(--neu-dur-release) var(--neu-ease-settle) backwards;
 }
 
 /* Neighbours of a focused note lift one after another (kmap.js sets --neu-kmap-nd by distance). */
-:root[data-os="neumorph"] :where(.kmap-svg.has-focus .kmap-node.is-near:not(:hover)) :is(.neumorph-kmap-shade, .neumorph-kmap-glow) {
-  transition-delay: var(--neu-kmap-nd);
+:root[data-os="neumorph"] :where(.kmap-svg.has-focus .kmap-node.is-near:not(:hover)) .kmap-ring {
+  animation-delay: var(--neu-kmap-nd);
 }
 
-/* Press: quick, like a key. */
-:root[data-os="neumorph"] :where(.kmap-svg .kmap-node:active) :is(.neumorph-kmap-shade, .neumorph-kmap-glow) {
-  transition-duration: var(--neu-dur-press);
-  transition-timing-function: var(--neu-ease-press);
+/* Press: quick, like a key, down from where the pointer raised it. */
+:root[data-os="neumorph"] :where(.kmap-svg .kmap-node:active, .kmap-svg .kmap-node.is-selected) .kmap-ring {
+  animation: neumorph-kmap-press var(--neu-dur-press) var(--neu-ease-press);
+}
+
+@media (hover: hover) {
+  :root[data-os="neumorph"] :where(.kmap-svg .kmap-node:active, .kmap-svg .kmap-node.is-selected) .kmap-ring {
+    --neu-kmap-was: var(--neu-kmap-lift-up);
+  }
 }
 
 /* The face: a dome highlight up-left on the porcelain, then the LED's socket: a lit lower lip
@@ -765,13 +800,13 @@
 
 /* First open (and back from List): kmap.js sets .neumorph-kmap-opening on the svg for the length
    of the wave and gives each node and groove its delay (--neu-kmap-d, by distance from the
-   centre). The keys rise out of the floor (their shadows grow from under them), labels follow. */
+   centre). The keys rise out of the floor (their shadows grow with them), labels follow. */
 :root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening .kmap-node {
   animation: neumorph-kmap-rise var(--neu-dur-kmap-rise) var(--neu-ease-out) both;
   animation-delay: var(--neu-kmap-d);
 }
 
-:root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening :is(.kmap-ring, .neumorph-kmap-shade, .neumorph-kmap-glow, .neumorph-kmap-face, .neumorph-kmap-glint) {
+:root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening :is(.kmap-ring, .neumorph-kmap-face, .neumorph-kmap-glint) {
   animation: neumorph-kmap-swell var(--neu-dur-kmap-rise) var(--neu-ease-settle) both;
   animation-delay: var(--neu-kmap-d);
 }
@@ -835,8 +870,8 @@
   animation: none;
 }
 
-/* The pointer light needs no rule of its own: kmap.js turns each nearby key's --neu-kmap-sx/-sy,
-   and the shadow discs' transform transition carries the swing. The ripple: kmap.js's own
+/* The pointer light needs no rule of its own: kmap.js turns each nearby key's --neu-kmap-sx/-sy
+   on its ring, frame by frame, and chrome's shadow pair follows. The ripple: kmap.js's own
    aria-hidden ring on the basin floor, under the keys; it moves by transform only. */
 :root[data-os="neumorph"] .neumorph-kmap-ripple {
   position: absolute;
@@ -936,8 +971,11 @@
   :root[data-os="neumorph"] .kmap-svg.neumorph-kmap-moulded :where(.kmap-svg.has-focus .kmap-node:not(.is-near):not(:hover), .kmap-svg .kmap-node.is-filtered:not(.is-selected)) .kmap-dot,
   :root[data-os="neumorph"] .neumorph-kmap-steady .neumorph-kmap-flow,
   :root[data-os="neumorph"] .neumorph-kmap-steady .neumorph-kmap-spark,
+  :root[data-os="neumorph"] :where(.kmap-node.neumorph-kmap-settling) .kmap-ring,
+  :root[data-os="neumorph"] :where(.kmap-node:hover, .kmap-node.is-near) .kmap-ring,
+  :root[data-os="neumorph"] :where(.kmap-svg .kmap-node:active, .kmap-svg .kmap-node.is-selected) .kmap-ring,
   :root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening .kmap-node,
-  :root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening :is(.kmap-ring, .neumorph-kmap-shade, .neumorph-kmap-glow, .neumorph-kmap-face, .neumorph-kmap-glint),
+  :root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening :is(.kmap-ring, .neumorph-kmap-face, .neumorph-kmap-glint),
   :root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening .kmap-label,
   :root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening .kmap-edge[data-kind="link"],
   :root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening .kmap-edge[data-kind="tag"],
@@ -956,12 +994,6 @@
     animation: none;
   }
 
-  /* Reduced motion: fx.js never starts kmap.js, so there is no decor and no pointer light (no
-     shadow swing) at all; this only backs that up by dropping the lift easing, so a key's state
-     still shows at once. */
-  :root[data-os="neumorph"] :where(.kmap-node:hover, .kmap-node.is-near, .kmap-node.is-selected, .kmap-node:active, .kmap-node.neumorph-kmap-settling) :is(.neumorph-kmap-shade, .neumorph-kmap-glow) {
-    transition: none;
-  }
 
   :root[data-os="neumorph"] .main > .window,
   :root[data-os="neumorph"] .neumorph-ghost-window,
