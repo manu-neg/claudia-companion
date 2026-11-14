@@ -304,9 +304,17 @@ def test_lit_channels_draw_in_staggered_and_fade_out_when_focus_leaves() -> None
     draw = blocks["neumorph-kmap-draw"]
     assert "calc(var(--neu-kmap-len) * var(--neu-kmap-from) * 1px)" in draw
     assert "stroke-dashoffset: 0px;" in draw and "stroke-dashoffset: 0;" not in draw
-    # A beam's dash is in its own pathLength (zoom-independent) and starts under the focused key.
-    assert "pathLength: FLOW_LEN" in KMAP_JS and '"--neu-kmap-len", String(FLOW_LEN)' in KMAP_JS
-    assert 'flow.el.style.setProperty("--neu-kmap-from"' in KMAP_JS
+    # A beam's dash starts under the focused key and, drawn, covers the whole beam (N4e, owner
+    # 2026-11-14: lit lines stopped short of the neighbour's key). A non-scaling stroke's dash runs
+    # in screen pixels, so the dash is the beam's screen length (plus caps), measured on every
+    # placing; a pathLength scaled it by the map-unit length instead (short at any zoom > 1).
+    assert "pathLength" not in KMAP_JS
+    place = KMAP_JS.split("function place(flow) {", 1)[1].split("\n  }\n", 1)[0]
+    link = place.split('if (flow.kind === "link") {', 1)[1].split("return;", 1)[0]
+    assert "const screen = length * k;" in place.split('if (flow.kind === "link")', 1)[0]
+    assert 'flow.el.style.setProperty("--neu-kmap-len", String(Math.ceil(screen) + 2));' in link
+    assert 'flow.el.style.setProperty("--neu-kmap-from"' in link
+    assert "vector-effect: non-scaling-stroke" in _rule(FX, f"{SCOPE} .neumorph-kmap-flow")
     # Grooves light one after another by neighbour distance: the neighbours' lift stagger.
     rules = dict(_rules(FX))
     assert "animation-delay: var(--neu-kmap-nd)" in rules[f"{SCOPE} .neumorph-kmap-flow"]

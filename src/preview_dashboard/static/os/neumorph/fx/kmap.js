@@ -31,10 +31,10 @@ const EPSILON = 0.04; // smaller changes are not written (no restyle for nothing
 const SETTLE_MS = 420; // a let-go key keeps its easing this long (> --neu-dur-release)
 const DIMPLE_PX = 11; // tag dimple pitch, = --neu-kmap-dimple (chrome.css)
 const SPARK_PX = 1.5; // radius of a lit dimple, on screen
-// Channel light (N4d): a beam's dash is measured in its own pathLength, so it draws at the same
-// pace whatever the zoom or the browser's units for a non-scaling stroke's dash (a pixel length
-// on a map-unit dash left the light hidden for most of its draw, then snapping in).
-const FLOW_LEN = 100;
+// Channel light: a beam is a non-scaling stroke, whose dash the browser lays in screen pixels, so
+// its dash is the beam's screen length (measured on every placing, as the grooves' is). Never a
+// pathLength: that scales the dash by the map-unit length while the dash runs in pixels, so at
+// any zoom above 1 the lit line stopped short of the neighbour's key (N4e, owner 2026-11-14).
 const EBBING = "neumorph-kmap-ebbing"; // a channel whose note lost focus: it fades out, then goes
 const EBB_MS = 400; // a little over its fade (--neu-dur-kmap-draw / 2), then it goes
 // A spark lights when the beam's ease-out (--neu-ease-out over --neu-dur-kmap-flow) reaches it:
@@ -382,9 +382,11 @@ function watchMap(svg, finePointer, motion) {
     for (const el of flows.querySelectorAll(`.${EBBING}`)) el.remove();
   }
 
-  // Lay a lit channel along its groove from the focused note's end. A link is one beam, its dash
-  // in its own pathLength (FLOW_LEN) and starting under the focused key (--neu-kmap-from: the
-  // part of the groove beyond the key), so the light leaves the key's rim on its first frame. A
+  // Lay a lit channel along its groove from the focused note's end. A link is one beam centre to
+  // centre like its groove (so it runs under both keys' rims), its dash its screen length plus the
+  // caps (--neu-kmap-len, again on every zoom or drag), starting under the focused key
+  // (--neu-kmap-from: the part of the groove beyond the key), so the light leaves the key's rim
+  // on its first frame and ends under the neighbour's. A
   // tag link is one spark per dimple, at the dimples' own places (the groove's dashes start at
   // its first end, in screen pixels), each lit as the beam would reach it. Placed again (zoom,
   // drag), a channel is already lit: it no longer animates.
@@ -394,6 +396,8 @@ function watchMap(svg, finePointer, motion) {
     const beyond = length > 0 ? Math.max(0.05, 1 - flow.key / length) : 1; // never a hidden beam
     if (flow.placed) flow.el.classList.add("neumorph-kmap-steady");
     flow.placed = true;
+    const k = scale();
+    const screen = length * k;
     if (flow.kind === "link") {
       const [ax, ay, bx, by] = flow.out ? [x1, y1, x2, y2] : [x2, y2, x1, y1];
       for (const line of flow.el.children) {
@@ -402,11 +406,10 @@ function watchMap(svg, finePointer, motion) {
         line.setAttribute("x2", bx);
         line.setAttribute("y2", by);
       }
+      flow.el.style.setProperty("--neu-kmap-len", String(Math.ceil(screen) + 2));
       flow.el.style.setProperty("--neu-kmap-from", beyond.toFixed(3));
       return;
     }
-    const k = scale();
-    const screen = length * k;
     flow.el.replaceChildren();
     if (!(screen > 0)) return;
     const r = (SPARK_PX / k).toFixed(3);
@@ -436,9 +439,7 @@ function watchMap(svg, finePointer, motion) {
       // filter on the layer, which would re-run over the map on every frame of the draw).
       const el = kind === "tag" ? decor("g", "neumorph-kmap-sparks") : decor("g", "neumorph-kmap-beam");
       if (kind === "link") {
-        const lines = [decor("line", "neumorph-kmap-flow neumorph-kmap-flow-glow", { pathLength: FLOW_LEN }), decor("line", "neumorph-kmap-flow", { pathLength: FLOW_LEN })];
-        el.append(...lines);
-        el.style.setProperty("--neu-kmap-len", String(FLOW_LEN));
+        el.append(decor("line", "neumorph-kmap-flow neumorph-kmap-flow-glow"), decor("line", "neumorph-kmap-flow"));
       }
       const out = edge.dataset.source === focus;
       el.style.setProperty("--neu-kmap-nd", `${delays.get(out ? edge.dataset.target : edge.dataset.source) || 0}ms`);
