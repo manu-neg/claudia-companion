@@ -80,6 +80,10 @@ def test_neumorph_references_nothing_outside_the_dashboard() -> None:
     for path in NEU.rglob("*"):
         if path.is_file():
             source = _text(path)
+            if path == NEU / "fx" / "kmap.js":
+                # N4c (owner 2026-11-14): the knowledge map may reference its own in-document
+                # paint servers, and nothing else (test_neumorph_kmap.py checks they resolve).
+                source = re.sub(r"url\(#neumorph-kmap-[a-z]+\)", "", source)
             assert "url(" not in source and "@import" not in source, path.name
             assert not re.search(r"https?://", source), path.name
 
