@@ -568,16 +568,17 @@
 
 /* A line drawn from one end: the dash is exactly the line's length (set per line by
    fx/kmap.js), the offset slides from one length to none. --neu-kmap-from = -1 starts the dash
-   at the other end. */
+   at the other end. The lengths are px, not bare numbers: Chrome steps a unitless dashoffset
+   from one end to the other at half time instead of sliding it (N4d: the line "appeared"). */
 @keyframes neumorph-kmap-draw {
   from {
-    stroke-dasharray: var(--neu-kmap-len) var(--neu-kmap-len);
-    stroke-dashoffset: calc(var(--neu-kmap-len) * var(--neu-kmap-from));
+    stroke-dasharray: calc(var(--neu-kmap-len) * 1px) calc(var(--neu-kmap-len) * 1px);
+    stroke-dashoffset: calc(var(--neu-kmap-len) * var(--neu-kmap-from) * 1px);
   }
 
   to {
-    stroke-dasharray: var(--neu-kmap-len) var(--neu-kmap-len);
-    stroke-dashoffset: 0;
+    stroke-dasharray: calc(var(--neu-kmap-len) * 1px) calc(var(--neu-kmap-len) * 1px);
+    stroke-dashoffset: 0px;
   }
 }
 
@@ -611,6 +612,17 @@
 
   to {
     opacity: var(--neu-kmap-halo-high);
+  }
+}
+
+/* A lit channel whose note lost focus fades out where it is (its own draw held). */
+@keyframes neumorph-kmap-ebb {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
   }
 }
 
@@ -836,7 +848,11 @@
 
 /* Channel light (kmap.js's flow layer, only the focused note's grooves): a thin iris line drawn
    out of the focused note along each groove; on a tag link one iris spark per dimple, each lit
-   as the light reaches it (--neu-kmap-t: its place along the groove, 0 at the focused note). */
+   as the light reaches it (--neu-kmap-t: when, as a share of the flow's duration). It starts at
+   the key's rim (kmap.js: --neu-kmap-from, the part beyond the key) and shoots out (ease-out), one
+   groove after another by neighbour distance (--neu-kmap-nd, the stagger the neighbours lift
+   with); when focus leaves, it fades where it is (.neumorph-kmap-ebbing). Only these few lines
+   animate: the rest of the map still changes in one step. */
 /* The glow is strokes, not a filter on the layer (that would re-run over the map every frame of
    the draw): a wide faint line under each beam, a faint ring round each spark. */
 :root[data-os="neumorph"] .neumorph-kmap-flows {
@@ -851,7 +867,8 @@
   vector-effect: non-scaling-stroke;
   opacity: 0.9;
   stroke-dasharray: var(--neu-kmap-len) var(--neu-kmap-len);
-  animation: neumorph-kmap-draw var(--neu-dur-kmap-flow) var(--neu-ease-breathe) both;
+  animation: neumorph-kmap-draw var(--neu-dur-kmap-flow) var(--neu-ease-out) both;
+  animation-delay: var(--neu-kmap-nd);
 }
 
 :root[data-os="neumorph"] .neumorph-kmap-flow-glow {
@@ -866,13 +883,24 @@
   vector-effect: non-scaling-stroke;
   opacity: 0.9;
   animation: neumorph-kmap-spark calc(var(--neu-dur-kmap-flow) / 4) var(--neu-ease-out) both;
-  animation-delay: calc(var(--neu-dur-kmap-flow) * var(--neu-kmap-t));
+  animation-delay: calc(var(--neu-kmap-nd) + var(--neu-dur-kmap-flow) * var(--neu-kmap-t));
 }
 
 /* Placed again after a zoom or a drag: the channel is already lit, it doesn't draw again. */
 :root[data-os="neumorph"] .neumorph-kmap-steady .neumorph-kmap-flow,
 :root[data-os="neumorph"] .neumorph-kmap-steady .neumorph-kmap-spark {
   animation: none;
+}
+
+/* Focus left: the channel holds its light where it reached (a half-drawn beam doesn't snap to
+   full) and fades out in half a draw's time, as the keys settle (an even ease: the settle curve
+   overshoots, which on opacity would blink it out). */
+:root[data-os="neumorph"] .neumorph-kmap-ebbing {
+  animation: neumorph-kmap-ebb calc(var(--neu-dur-kmap-draw) / 2) var(--neu-ease-breathe) forwards;
+}
+
+:root[data-os="neumorph"] .neumorph-kmap-ebbing :is(.neumorph-kmap-flow, .neumorph-kmap-spark) {
+  animation-play-state: paused;
 }
 
 /* The pointer light needs no rule of its own: kmap.js turns each nearby key's --neu-kmap-sx/-sy
@@ -988,6 +1016,7 @@
   :root[data-os="neumorph"] .kmap-svg.neumorph-kmap-opening .neumorph-kmap-carve[data-kind="tag"],
   :root[data-os="neumorph"] .neumorph-kmap-flow,
   :root[data-os="neumorph"] .neumorph-kmap-spark,
+  :root[data-os="neumorph"] .neumorph-kmap-ebbing,
   :root[data-os="neumorph"] .neumorph-kmap-ripple,
   :root[data-os="neumorph"] .kmap-stage:has(.kmap-index:empty) .kmap-message::before,
   :root[data-os="neumorph"] .kmap-section,
