@@ -285,14 +285,47 @@ def test_only_keys_in_play_ease_so_a_focus_change_repaints_the_map_once() -> Non
 def test_every_lit_channel_draws_out_of_the_focused_note() -> None:
     rules = dict(_rules(FX))
     draw = rules[f"{SCOPE} .neumorph-kmap-flow"]
-    assert "animation: neumorph-kmap-draw var(--neu-dur-kmap-flow)" in draw
+    assert "animation: neumorph-kmap-draw var(--neu-dur-kmap-flow) var(--neu-ease-out)" in draw
     # Tag channels: one iris spark per dimple, each lit as the light reaches it.
     spark = rules[f"{SCOPE} .neumorph-kmap-spark"]
     assert "animation: neumorph-kmap-spark" in spark
-    assert "animation-delay: calc(var(--neu-dur-kmap-flow) * var(--neu-kmap-t))" in spark
+    stagger = "calc(var(--neu-kmap-nd) + var(--neu-dur-kmap-flow) * var(--neu-kmap-t))"
+    assert f"animation-delay: {stagger}" in spark
     assert "DIMPLE_PX = 11;" in KMAP_JS and re.search(r"--neu-kmap-dimple:\s*11px;", CHROME)
     # The light starts at the focused note's end of the groove.
     assert "edge.dataset.source === focus" in KMAP_JS
+
+
+def test_lit_channels_draw_in_staggered_and_fade_out_when_focus_leaves() -> None:
+    # N4d (owner 2026-11-14: the lines "appear instantly"). The draw slides a px dashoffset (a
+    # unitless one is stepped at half time, not interpolated, so the light snapped in).
+    keyframes = r"@keyframes (neumorph-kmap-[\w-]+) \{((?:[^{}]*\{[^{}]*\})*)\s*\}"
+    blocks = dict(re.findall(keyframes, FX))
+    draw = blocks["neumorph-kmap-draw"]
+    assert "calc(var(--neu-kmap-len) * var(--neu-kmap-from) * 1px)" in draw
+    assert "stroke-dashoffset: 0px;" in draw and "stroke-dashoffset: 0;" not in draw
+    # A beam's dash is in its own pathLength (zoom-independent) and starts under the focused key.
+    assert "pathLength: FLOW_LEN" in KMAP_JS and '"--neu-kmap-len", String(FLOW_LEN)' in KMAP_JS
+    assert 'flow.el.style.setProperty("--neu-kmap-from"' in KMAP_JS
+    # Grooves light one after another by neighbour distance: the neighbours' lift stagger.
+    rules = dict(_rules(FX))
+    assert "animation-delay: var(--neu-kmap-nd)" in rules[f"{SCOPE} .neumorph-kmap-flow"]
+    assert 'el.style.setProperty("--neu-kmap-nd"' in KMAP_JS
+    # Focus leaves: the old channels hold where they reached and fade (opacity only), then go;
+    # without motion they go at once.
+    ebb = rules[f"{SCOPE} .neumorph-kmap-ebbing"]
+    assert "animation: neumorph-kmap-ebb " in ebb
+    assert set(re.findall(r"([a-z-]+)\s*:", blocks["neumorph-kmap-ebb"])) == {"opacity"}
+    held = rules[f"{SCOPE} .neumorph-kmap-ebbing :is(.neumorph-kmap-flow, .neumorph-kmap-spark)"]
+    assert "animation-play-state: paused" in held
+    assert "classList.add(EBBING)" in KMAP_JS and "EBB_MS" in KMAP_JS
+    assert "if (!motion) {" in KMAP_JS.split("function ebbFlows()", 1)[1].split("\n  }\n", 1)[0]
+    reduced = FX.split("@media (prefers-reduced-motion: reduce)", 1)[1]
+    assert ".neumorph-kmap-ebbing," in reduced
+    # Only the focused note's channels animate: nothing else in the map gains a transition.
+    for selector, body in _rules(FX):
+        if ".kmap-edge" in selector or ".kmap-node" in selector:
+            assert "transition" not in body, selector
 
 
 def test_kmap_fx_is_decoration_only() -> None:

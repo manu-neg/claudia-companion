@@ -2,9 +2,10 @@
   Knowledge map window (#/knowledge; docs/frontend.md, security.md C57): Claudia's notes as a live
   graph built from GET /api/kb/graph on every open - dots = notes (colour = category, size =
   connections, a ring = changed this week), lines = [[links]] and shared tags; zoom/pan/drag, tap a
-  dot to read the note in the side panel, search, category filter, neighbour highlight. Phones
-  (and the List view) get the notes listed by category. Read only; note text is untrusted and only
-  ever becomes text nodes (kmap-note.js). Also shows the pending-approvals box (kmap-approvals.js).
+  dot to read the note in the side panel (tap it again to close it), search, category filter,
+  neighbour highlight. Phones (and the List view) get the notes listed by category. Read only; note
+  text is untrusted and only ever becomes text nodes (kmap-note.js). Also shows the
+  pending-approvals box (kmap-approvals.js).
 */
 import { ApiError, apiGet } from "./api.js";
 import { icon, popup, svgElement, windowFrame } from "./chrome.js";
@@ -53,6 +54,16 @@ function cleanGraph(data) {
     skipped: Number(data?.skipped) || 0,
     truncated: data?.truncated === true,
   };
+}
+
+/**
+ * What a tap on the map (a press that didn't move) does: "open" the pressed note, "close" when
+ * it is the note already open (a second tap deselects, owner 2026-11-14) or on the bare floor
+ * while one is open, else null. Pure, so the toggle is tested under node.
+ */
+export function pressAction(pressed, selected) {
+  if (pressed) return pressed === selected ? "close" : "open";
+  return selected ? "close" : null;
 }
 
 /** @param main the window area; returns the cleanup function (stops polling and listeners). */
@@ -615,8 +626,9 @@ export function renderKnowledgeMap(main) {
     const done = gesture;
     if (pointers.size === 0) gesture = null;
     if (!done || done.kind !== "press" || done.moved) return;
-    if (done.node) openNote(done.node);
-    else if (state.selected) closeNote();
+    const action = pressAction(done.node, state.selected);
+    if (action === "open") openNote(done.node);
+    else if (action === "close") closeNote();
   }
 
   function hover(id) {

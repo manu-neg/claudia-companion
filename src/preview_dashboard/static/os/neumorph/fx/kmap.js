@@ -3,8 +3,8 @@
   dresses every note as the approved mockup's porcelain key (convex face, gradient rim, concave
   socket, blurred LED halo, lit LED glass, painted by one shared aria-hidden <defs>; its one soft
   shadow is chrome's), carves the grooves, draws iris light along the focused note's grooves out
-  of it, ripples the floor on select, plays the opening wave and makes the pointer a light source
-  that turns each nearby key's shadow. Reads only the map's neutral hooks and geometry; writes CSS
+  of it (nearest neighbour first; it fades when focus leaves), ripples the floor on select, plays
+  the opening wave and makes the pointer a light source that turns each nearby key's shadow. Reads only the map's neutral hooks and geometry; writes CSS
   custom properties (CSSOM), OS-prefixed classes and its own empty aria-hidden decor. No text, no
   item data, no prevented events; the approvals card is untouched.
 */
@@ -31,6 +31,16 @@ const EPSILON = 0.04; // smaller changes are not written (no restyle for nothing
 const SETTLE_MS = 420; // a let-go key keeps its easing this long (> --neu-dur-release)
 const DIMPLE_PX = 11; // tag dimple pitch, = --neu-kmap-dimple (chrome.css)
 const SPARK_PX = 1.5; // radius of a lit dimple, on screen
+// Channel light (N4d): a beam's dash is measured in its own pathLength, so it draws at the same
+// pace whatever the zoom or the browser's units for a non-scaling stroke's dash (a pixel length
+// on a map-unit dash left the light hidden for most of its draw, then snapping in).
+const FLOW_LEN = 100;
+const EBBING = "neumorph-kmap-ebbing"; // a channel whose note lost focus: it fades out, then goes
+const EBB_MS = 400; // a little over its fade (--neu-dur-kmap-draw / 2), then it goes
+// A spark lights when the beam's ease-out (--neu-ease-out over --neu-dur-kmap-flow) reaches it:
+// that curve covers half the groove in about a tenth of its time and nine tenths in about a third,
+// so a dimple's delay is SPARK_PACE * (its place beyond the key)^2 of the flow's duration.
+const SPARK_PACE = 0.4;
 
 // A key's face is the approved mockup's key, drawn at the mockup's own size (a 21-unit key) and
 // scaled to each key (knowledge-map.js draws the ring at r + 4), so its gradients, rim, blur and
@@ -156,6 +166,7 @@ function watchMap(svg, finePointer, motion) {
   const dressed = new WeakSet();
   const settling = new Map(); // g -> when it was let go
   let settleTimer = 0;
+  const ebbTimers = new Set(); // pending removals of fading channels (cleared on stop)
   let focus = null;
   let selected = null;
   let hovered = null;
@@ -165,6 +176,7 @@ function watchMap(svg, finePointer, motion) {
   let frame = 0;
   let pointer = null;
   let zoom = 0;
+  let keyScale = 1; // --neu-kmap-k: a key's ring drawn at its r times this (read once per draw)
 
   const flows = decor("g", FLOWS);
   viewport.insertBefore(flows, nodeLayer);
@@ -291,6 +303,7 @@ function watchMap(svg, finePointer, motion) {
     rescaleGroove();
     const groups = [...nodeLayer.querySelectorAll(".kmap-node")];
     if (!groups.length) return;
+    keyScale = Number.parseFloat(getComputedStyle(svg).getPropertyValue("--neu-kmap-k")) || 1;
     let cx = 0;
     let cy = 0;
     for (const g of groups) {
@@ -347,14 +360,38 @@ function watchMap(svg, finePointer, motion) {
     flowing = [];
   }
 
-  // Lay a lit channel along its groove from the focused note's end. A link is one line (a
-  // non-scaling stroke, so its dash is in screen pixels). A tag link is one spark per dimple, at
-  // the dimples' own places (the groove's dashes start at its first end), each lit as the light
-  // reaches it. Placed again (zoom, drag), a channel is already lit: it no longer animates.
+  // The focused note changed: its lit channels fade out where they are (fx.css holds their own
+  // draw and fades the channel), then go. Without motion they go at once.
+  function ebbFlows() {
+    const leaving = flowing.map((flow) => flow.el);
+    flowing = [];
+    if (!motion) {
+      for (const el of leaving) el.remove();
+      return;
+    }
+    for (const el of leaving) el.classList.add(EBBING);
+    if (!leaving.length) return;
+    const timer = setTimeout(() => {
+      ebbTimers.delete(timer);
+      leaving.forEach((el) => el.remove());
+    }, EBB_MS);
+    ebbTimers.add(timer);
+  }
+
+  function dropEbbing() {
+    for (const el of flows.querySelectorAll(`.${EBBING}`)) el.remove();
+  }
+
+  // Lay a lit channel along its groove from the focused note's end. A link is one beam, its dash
+  // in its own pathLength (FLOW_LEN) and starting under the focused key (--neu-kmap-from: the
+  // part of the groove beyond the key), so the light leaves the key's rim on its first frame. A
+  // tag link is one spark per dimple, at the dimples' own places (the groove's dashes start at
+  // its first end, in screen pixels), each lit as the beam would reach it. Placed again (zoom,
+  // drag), a channel is already lit: it no longer animates.
   function place(flow) {
     const { x1, y1, x2, y2 } = lineEnds(flow.edge);
-    const k = scale();
-    const screen = Math.hypot(x2 - x1, y2 - y1) * k;
+    const length = Math.hypot(x2 - x1, y2 - y1);
+    const beyond = length > 0 ? Math.max(0.05, 1 - flow.key / length) : 1; // never a hidden beam
     if (flow.placed) flow.el.classList.add("neumorph-kmap-steady");
     flow.placed = true;
     if (flow.kind === "link") {
@@ -364,36 +401,48 @@ function watchMap(svg, finePointer, motion) {
         line.setAttribute("y1", ay);
         line.setAttribute("x2", bx);
         line.setAttribute("y2", by);
-        line.style.setProperty("--neu-kmap-len", String(Math.ceil(screen) + 2));
       }
+      flow.el.style.setProperty("--neu-kmap-from", beyond.toFixed(3));
       return;
     }
+    const k = scale();
+    const screen = length * k;
     flow.el.replaceChildren();
     if (!(screen > 0)) return;
     const r = (SPARK_PX / k).toFixed(3);
     for (let s = 0; s <= screen; s += DIMPLE_PX) {
       const f = s / screen;
+      const from = flow.out ? f : 1 - f; // its place from the focused note's end
+      const p = Math.max(0, (from - (1 - beyond)) / beyond);
       const spark = decor("circle", "neumorph-kmap-spark", {
         cx: (x1 + (x2 - x1) * f).toFixed(2),
         cy: (y1 + (y2 - y1) * f).toFixed(2),
         r,
       });
-      spark.style.setProperty("--neu-kmap-t", (flow.out ? f : 1 - f).toFixed(3));
+      spark.style.setProperty("--neu-kmap-t", (SPARK_PACE * p * p).toFixed(3));
       flow.el.appendChild(spark);
     }
   }
 
-  function drawFlows() {
-    clearFlows();
-    if (!focus) return;
-    for (const edge of edgeLayer.querySelectorAll(".kmap-edge.is-near")) {
-      if (edge.classList.contains("is-filtered")) continue;
+  // Light the focused note's grooves, each starting `delays` (by neighbour, nearest first) after
+  // the last, so the light bursts out of the key ring by ring.
+  function drawFlows(edges, delays) {
+    const centre = byId.get(focus);
+    const ring = centre ? centre.querySelector(".kmap-ring") : null;
+    const key = ring ? (Number(ring.getAttribute("r")) || 0) * keyScale : 0;
+    for (const edge of edges) {
       const kind = edge.dataset.kind === "tag" ? "tag" : "link";
       // A link's light is a beam: a wide faint glow line under the thin line (strokes, not a
       // filter on the layer, which would re-run over the map on every frame of the draw).
       const el = kind === "tag" ? decor("g", "neumorph-kmap-sparks") : decor("g", "neumorph-kmap-beam");
-      if (kind === "link") el.append(decor("line", "neumorph-kmap-flow neumorph-kmap-flow-glow"), decor("line", "neumorph-kmap-flow"));
-      const flow = { edge, kind, out: edge.dataset.source === focus, el, placed: false };
+      if (kind === "link") {
+        const lines = [decor("line", "neumorph-kmap-flow neumorph-kmap-flow-glow", { pathLength: FLOW_LEN }), decor("line", "neumorph-kmap-flow", { pathLength: FLOW_LEN })];
+        el.append(...lines);
+        el.style.setProperty("--neu-kmap-len", String(FLOW_LEN));
+      }
+      const out = edge.dataset.source === focus;
+      el.style.setProperty("--neu-kmap-nd", `${delays.get(out ? edge.dataset.target : edge.dataset.source) || 0}ms`);
+      const flow = { edge, kind, out, el, key, placed: false };
       place(flow);
       flows.appendChild(el);
       flowing.push(flow);
@@ -445,19 +494,28 @@ function watchMap(svg, finePointer, motion) {
       for (const id of neighboursOf(focus)) letGo(byId.get(id));
     }
     focus = next;
-    drawFlows();
+    ebbFlows();
     if (!focus) return;
+    const edges = [...edgeLayer.querySelectorAll(".kmap-edge.is-near")].filter((edge) => !edge.classList.contains("is-filtered"));
+    const delays = new Map(); // neighbour id -> its place in the stagger
     const centre = byId.get(focus);
     const at = centre ? nodes.get(centre) : null;
-    if (!at) return;
-    centre.style.setProperty("--neu-kmap-nd", "0ms");
-    const near = new Set(neighboursOf(focus));
-    const ranked = [];
-    for (const [g, n] of nodes) {
-      if (near.has(n.id)) ranked.push([Math.hypot(n.x - at.x, n.y - at.y), g]);
+    if (at) {
+      centre.style.setProperty("--neu-kmap-nd", "0ms");
+      const near = new Set(edges.map((edge) => (edge.dataset.source === focus ? edge.dataset.target : edge.dataset.source)));
+      const ranked = [];
+      for (const [g, n] of nodes) {
+        if (near.has(n.id) && n.id !== focus) ranked.push([Math.hypot(n.x - at.x, n.y - at.y), g, n.id]);
+      }
+      ranked.sort((p, q) => p[0] - q[0]);
+      ranked.forEach(([, g, id], i) => {
+        const delay = Math.min(i, STAGGER_STEPS) * STAGGER_MS;
+        delays.set(id, delay);
+        g.style.setProperty("--neu-kmap-nd", `${delay}ms`);
+      });
     }
-    ranked.sort((p, q) => p[0] - q[0]);
-    ranked.forEach(([, g], i) => g.style.setProperty("--neu-kmap-nd", `${Math.min(i, STAGGER_STEPS) * STAGGER_MS}ms`));
+    // The light leaves along each groove as its neighbour lifts, nearest first.
+    drawFlows(edges, delays);
   }
 
   function onMutations(records) {
@@ -483,6 +541,7 @@ function watchMap(svg, finePointer, motion) {
     if (drawn) prime();
     else if (moved) {
       if (dragged) trace();
+      dropEbbing(); // a fading channel isn't placed again: it goes now
       for (const flow of flowing) place(flow);
     }
     if (!pending) {
@@ -587,6 +646,8 @@ function watchMap(svg, finePointer, motion) {
     modeObserver.disconnect();
     clearTimeout(openTimer);
     clearTimeout(settleTimer);
+    for (const timer of ebbTimers) clearTimeout(timer);
+    ebbTimers.clear();
     if (frame) cancelAnimationFrame(frame);
     svg.removeEventListener("pointermove", onMove);
     svg.removeEventListener("pointerover", onOver);

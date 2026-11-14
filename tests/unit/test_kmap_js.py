@@ -1,7 +1,8 @@
 """Knowledge map frontend (unit M8): pure layout helpers under node, plus wiring checks.
 
 `kmap-layout.js` is driven under node (deterministic layout, fit, zoom, search);
-`kmap-note.js` link splitting is driven too (DOM-free part). Grep checks pin the
+`kmap-note.js` link splitting and the map's tap toggle (`pressAction`, N4d) are driven too
+(DOM-free parts). Grep checks pin the
 router route, the shell shortcut and that note text never meets an HTML sink.
 """
 
@@ -97,6 +98,40 @@ def test_layout_and_link_helpers() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+_PRESS_SCRIPT = """
+const { pressAction } = await import(process.argv[1]);
+const check = (cond, msg) => { if (!cond) { console.error(msg); process.exit(1); } };
+check(pressAction("a", null) === "open", "a tap opens a note");
+check(pressAction("b", "a") === "open", "a tap on another note opens it");
+check(pressAction("a", "a") === "close", "a second tap on the open note closes it");
+check(pressAction(null, "a") === "close", "a tap on the floor closes the open note");
+check(pressAction(null, null) === null, "a tap on the floor with nothing open does nothing");
+// Click, click: open, then closed (N4d, owner 2026-11-14).
+let selected = null;
+for (const _ of [1, 2]) selected = pressAction("a", selected) === "open" ? "a" : null;
+check(selected === null, "click-click deselects");
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_tapping_the_open_note_again_closes_it() -> None:
+    node = shutil.which("node")
+    assert node is not None
+    result = subprocess.run(  # noqa: S603 - fixed node binary, our own files
+        [node, "--input-type=module", "-e", _PRESS_SCRIPT, (STATIC / "knowledge-map.js").as_uri()],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    # The map's tap handler is the one that uses it (no second path that always opens).
+    source = (STATIC / "knowledge-map.js").read_text("utf-8")
+    up = source.split("function onPointerUp(", 1)[1].split("\n  }\n", 1)[0]
+    assert "pressAction(done.node, state.selected)" in up
+    assert 'action === "close"' in up and "closeNote()" in up
 
 
 def test_route_and_shortcut_are_wired() -> None:
